@@ -1,75 +1,90 @@
+<div align="center">
+
 # AI 2D Animation Generator
 
-A full-stack web application that converts natural language animation prompts into structured 2D animation scenes, then renders and animates them in the browser.
+Full-stack application that converts natural language animation prompts into structured 2D animation scenes, then renders and animates them in the browser.
+
+![Status](https://img.shields.io/badge/Status-Active-16a34a)
+![Frontend](https://img.shields.io/badge/Frontend-React%2018%20%7C%20Vite%205-2563eb)
+![Backend](https://img.shields.io/badge/Backend-Node.js%20%7C%20Express%204-0f766e)
+![AI](https://img.shields.io/badge/AI-Gemini%202.5%20Flash-f59e0b)
+![License](https://img.shields.io/badge/License-MIT-4f46e5)
+
+</div>
+
+---
+
+## Quick Start
+
+```bash
+# 1) Clone
+git clone https://github.com/romin711/ANIMATION_ENGINE.git
+cd ANIMATION_ENGINE
+
+# 2) Install backend
+cd backend && npm install
+
+# 3) Configure env
+# backend/.env
+# GEMINI_API_KEY=your_gemini_api_key
+# PORT=5000
+
+# 4) Run backend
+npm run dev
+
+# 5) In a new terminal, run frontend
+cd ../frontend && npm install && npm run dev
+```
+
+- Frontend: http://localhost:5173
+- Backend health: http://localhost:5000/health
+
+> [!IMPORTANT]
+> If `backend/.env.example` contains a real API key, rotate it and replace it with a placeholder before sharing publicly.
+
+---
 
 ## 1. Project Overview
 
 AI 2D Animation Generator helps users create simple motion graphics without manually writing SVG or animation code. Instead of hand-authoring timelines, users describe what they want in plain language, and the system generates a validated animation JSON script and plays it instantly.
 
-### Problem it solves
+### Problem It Solves
 - Creating even basic 2D animations typically requires design tooling or frontend animation knowledge.
 - Prompt-to-animation flow reduces the barrier for prototyping visual ideas.
 
-### Target users
+### Target Users
 - Frontend developers prototyping motion quickly
 - Students learning animation data models (scene + timeline)
 - Creators and hobbyists experimenting with AI-assisted visuals
 
+---
+
 ## 2. Features
 
-### Prompt and Generation
-- Natural language prompt input for animation intent
-- Prompt enrichment using visual controls (shape, color, speed, duration)
-- Backend integration with Google Gemini model for JSON generation
+| Area | Capabilities |
+|---|---|
+| Prompt and Generation | Natural language prompt input; prompt enrichment using controls (shape, color, speed, duration); backend integration with Google Gemini |
+| Validation and Reliability | Server-side input validation; schema-based validation of AI output; structured error responses |
+| Rendering and Playback | SVG scene rendering; GSAP timeline playback; animation types: move, fade, scale, rotate, color; playback controls (play, pause, restart, scrub) |
+| UX and Productivity | Generation states (idle, loading, success, error); prompt suggestions; local generation history |
+| Export | Browser-based WebM export using MediaRecorder; configurable export duration (fixed/auto) |
 
-### Validation and Reliability
-- Server-side input validation for request payloads
-- Schema-based validation of AI output before returning data to client
-- Structured error responses for invalid AI output or malformed requests
+> [!NOTE]
+> `src/components/JSONInputPanel.jsx` and `src/components/StatusPanel.jsx` exist in the repository but are not currently mounted in `App`.
 
-### Rendering and Playback
-- SVG scene rendering from generated JSON
-- GSAP timeline playback for animation sequences
-- Supported animation types: move, fade, scale, rotate, color
-- Playback controls: play, pause, restart, scrub timeline
-
-### UX and Productivity
-- Generation status states (idle, loading, success, error)
-- Prompt suggestions to help users start quickly
-- Local history of generated animations in UI state
-
-### Export
-- Browser-based WebM video export using MediaRecorder
-- Configurable export duration (fixed seconds or auto)
+---
 
 ## 3. Tech Stack
 
-### Frontend
-- JavaScript (ES Modules)
-- React 18
-- Vite 5
-- Tailwind CSS 3 + PostCSS + Autoprefixer
-- GSAP 3 for timeline animation
-- Axios for HTTP requests
-- Lucide React for icons
+| Layer | Technologies |
+|---|---|
+| Frontend | JavaScript (ES Modules), React 18, Vite 5, Tailwind CSS 3, PostCSS, Autoprefixer, GSAP 3, Axios, Lucide React |
+| Backend | Node.js, Express 4, CORS, dotenv, native fetch |
+| AI / External Service | Google Generative Language API (`gemini-2.5-flash`) |
+| Tooling | Nodemon, npm |
+| Database | None (current implementation) |
 
-### Backend
-- Node.js
-- Express 4
-- CORS middleware
-- dotenv for environment variable management
-- Native fetch call to Gemini API endpoint
-
-### AI / External Service
-- Google Generative Language API
-- Model used in code: gemini-2.5-flash
-
-### Tooling
-- Nodemon for backend development mode
-- npm for package management
-
-### Database
-- No database is used in the current implementation
+---
 
 ## 4. System Architecture
 
@@ -77,28 +92,26 @@ The project uses a two-tier architecture:
 - Frontend client (React): prompt input, rendering, playback, export
 - Backend API (Express): request validation, AI orchestration, schema validation
 
-### Module responsibilities
+### Module Responsibilities
 
 #### Backend
-- server.js: API bootstrap, middleware setup, health endpoint, global error handler
-- routes/animationRoutes.js: route registration for animation generation
-- controllers/animationController.js: request validation, service orchestration, response handling
-- services/geminiService.js: prompt construction, Gemini API call, JSON parsing
-- validators/animationValidator.js: contract validation for animation JSON
-- schema/animationSchema.js: canonical schema reference
+- `server.js`: API bootstrap, middleware setup, health endpoint, global error handler
+- `routes/animationRoutes.js`: route registration for animation generation
+- `controllers/animationController.js`: request validation, service orchestration, response handling
+- `services/geminiService.js`: prompt construction, Gemini API call, JSON parsing
+- `validators/animationValidator.js`: contract validation for animation JSON
+- `schema/animationSchema.js`: canonical schema reference
 
 #### Frontend
-- src/App.jsx: application state and orchestration
-- src/components/ControlPanel.jsx: prompt + controls + history tab
-- src/components/AnimationCanvas.jsx: SVG rendering, GSAP timeline, export workflow
-- src/components/TopNav.jsx: status-aware top navigation
-- src/services/animationService.js: API client wrapper
+- `src/App.jsx`: application state and orchestration
+- `src/components/ControlPanel.jsx`: prompt + controls + history tab
+- `src/components/AnimationCanvas.jsx`: SVG rendering, GSAP timeline, export workflow
+- `src/components/TopNav.jsx`: status-aware top navigation
+- `src/services/animationService.js`: API client wrapper
 
-Note: src/components/JSONInputPanel.jsx and src/components/StatusPanel.jsx exist in the repository but are not currently mounted in App.
+### Data Flow
 
-### Data flow
-
-Input -> Processing -> Output
+`Input -> Processing -> Output`
 
 1. User writes a prompt and configures visual controls in frontend.
 2. Frontend merges user input into a single enriched description string.
@@ -110,9 +123,11 @@ Input -> Processing -> Output
 8. Frontend renders SVG elements and plays timeline via GSAP.
 9. User can scrub, replay, and export to WebM.
 
+---
+
 ## 5. Project Structure
 
-~~~text
+```text
 2d_animation_generator/
 ├── .gitignore
 ├── README.md
@@ -149,7 +164,9 @@ Input -> Processing -> Output
         │   └── TopNav.jsx
         └── services/
             └── animationService.js
-~~~
+```
+
+---
 
 ## 6. Installation and Setup
 
@@ -158,68 +175,68 @@ Input -> Processing -> Output
 - npm 9+
 - A valid Google Gemini API key
 
-### 1) Clone repository
-~~~bash
-git clone https://github.com/your-username/2d_animation_generator.git
-cd 2d_animation_generator
-~~~
+### Step-by-Step
 
-### 2) Install backend dependencies
-~~~bash
+1. Clone repository
+```bash
+git clone https://github.com/romin711/ANIMATION_ENGINE.git
+cd ANIMATION_ENGINE
+```
+
+2. Install backend dependencies
+```bash
 cd backend
 npm install
-~~~
+```
 
-### 3) Configure backend environment
-Create or update backend/.env with:
-
-~~~env
+3. Configure backend environment (`backend/.env`)
+```env
 GEMINI_API_KEY=your_gemini_api_key
 PORT=5000
-~~~
+```
 
-Security note: if backend/.env.example contains a real key, rotate that key and replace it with a placeholder before publishing.
-
-### 4) Install frontend dependencies
-~~~bash
+4. Install frontend dependencies
+```bash
 cd ../frontend
 npm install
-~~~
+```
 
-### 5) Run backend (Terminal 1)
-~~~bash
+5. Run backend (Terminal 1)
+```bash
 cd backend
 npm run dev
-~~~
+```
 
-### 6) Run frontend (Terminal 2)
-~~~bash
+6. Run frontend (Terminal 2)
+```bash
 cd frontend
 npm run dev
-~~~
+```
 
-### 7) Open application
+7. Open application
 - Frontend: http://localhost:5173
 - Backend health check: http://localhost:5000/health
 
+---
+
 ## 7. Usage
 
-### Basic workflow
+### Basic Workflow
 1. Open the app in browser.
-2. Enter a prompt in the Create tab. Example: A glowing blue planet orbiting a bright yellow star.
+2. Enter a prompt in the Create tab. Example: `A glowing blue planet orbiting a bright yellow star.`
 3. Optionally adjust visual settings (shape, color, speed, duration).
-4. Click Generate Animation.
+4. Click **Generate Animation**.
 5. Review the generated animation in the preview canvas.
 6. Use playback controls to scrub or replay.
 7. Optionally export as WebM video.
 
-### Example input
-~~~text
+### Example Input
+```text
 A red square spinning continuously while fading in and out on a dark background.
-~~~
+```
 
-### Example success response shape
-~~~json
+### Example Success Response Shape
+```json
 {
   "animation": {
     "version": "1.0",
@@ -256,54 +273,64 @@ A red square spinning continuously while fading in and out on a dark background.
     ]
   }
 }
-~~~
+```
+
+---
 
 ## 8. Screenshots and Demo
 
 Add repository assets when available:
-- docs/images/home.png
-- docs/images/generated-animation.png
-- docs/images/error-state.png
+- `docs/images/home.png`
+- `docs/images/generated-animation.png`
+- `docs/images/error-state.png`
 - Demo video or GIF link
 
 Placeholder markdown:
 
-~~~md
+```md
 ![Home Screen](docs/images/home.png)
 ![Generated Animation](docs/images/generated-animation.png)
-~~~
+```
+
+---
 
 ## 9. API Documentation
 
 ### Base URL
-- Local: http://localhost:5000
+- Local: `http://localhost:5000`
 
 ### Health Check
-- Method: GET
-- Endpoint: /health
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| Endpoint | `/health` |
 
 Success response:
-~~~json
+```json
 {
   "status": "ok",
   "message": "AI Animation Backend is running"
 }
-~~~
+```
 
 ### Generate Animation
-- Method: POST
-- Endpoint: /api/animation/generate
-- Content-Type: application/json
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| Endpoint | `/api/animation/generate` |
+| Content-Type | `application/json` |
 
 Request body:
-~~~json
+```json
 {
   "description": "A blue circle moving from left to right"
 }
-~~~
+```
 
 Success response (200):
-~~~json
+```json
 {
   "animation": {
     "version": "1.0",
@@ -312,33 +339,35 @@ Success response (200):
     "timeline": []
   }
 }
-~~~
+```
 
 Validation error (400):
-~~~json
+```json
 {
   "error": "Validation error",
   "details": "Request body must include a non-empty \"description\" string."
 }
-~~~
+```
 
 AI schema validation error (422):
-~~~json
+```json
 {
   "error": "AI returned invalid animation JSON",
   "details": [
     "timeline[0]: \"target\" must reference a valid element id."
   ]
 }
-~~~
+```
 
 Server error (500):
-~~~json
+```json
 {
   "error": "Internal server error",
   "details": "Error message"
 }
-~~~
+```
+
+---
 
 ## 10. Future Improvements
 
@@ -350,6 +379,8 @@ Server error (500):
 - Add automated tests (unit and integration)
 - Add Docker support for one-command local startup
 - Add CI pipeline for lint, tests, and build checks
+
+---
 
 ## 11. Contributing
 
@@ -365,11 +396,13 @@ Recommended contribution quality:
 - Follow existing code style
 - Update documentation for behavior changes
 
+---
+
 ## 12. License
 
 This project is licensed under the MIT License.
 
-~~~text
+```text
 MIT License
 
 Copyright (c) 2026
@@ -391,10 +424,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-~~~
+```
+
+---
 
 ## 13. Author
 
-Meet Patel
+**Meet Patel**
 
 Software engineer focused on building practical, user-facing products with clean architecture and strong developer experience.
