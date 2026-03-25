@@ -2,6 +2,8 @@
 
 # AI 2D Animation Generator
 
+**Prompt to Motion, Instantly.**
+
 Full-stack application that converts natural language animation prompts into structured 2D animation scenes, then renders and animates them in the browser.
 
 ![Status](https://img.shields.io/badge/Status-Active-16a34a)
@@ -11,6 +13,14 @@ Full-stack application that converts natural language animation prompts into str
 ![License](https://img.shields.io/badge/License-MIT-4f46e5)
 
 </div>
+
+---
+
+## Quick Overview
+
+| What | Why | How |
+|---|---|---|
+| Generate 2D animations from plain-language prompts | Reduce the friction of building motion graphics manually | React frontend collects prompt + controls, Express backend calls Gemini, validated JSON is rendered and animated with SVG + GSAP |
 
 ---
 
@@ -39,6 +49,9 @@ cd ../frontend && npm install && npm run dev
 - Frontend: http://localhost:5173
 - Backend health: http://localhost:5000/health
 
+> [!IMPORTANT]
+> If `backend/.env.example` contains a real API key, rotate it and replace it with a placeholder before sharing publicly.
+
 ---
 
 ## 1. Project Overview
@@ -58,13 +71,30 @@ AI 2D Animation Generator helps users create simple motion graphics without manu
 
 ## 2. Features
 
-| Area | Capabilities |
-|---|---|
-| Prompt and Generation | Natural language prompt input; prompt enrichment using controls (shape, color, speed, duration); backend integration with Google Gemini |
-| Validation and Reliability | Server-side input validation; schema-based validation of AI output; structured error responses |
-| Rendering and Playback | SVG scene rendering; GSAP timeline playback; animation types: move, fade, scale, rotate, color; playback controls (play, pause, restart, scrub) |
-| UX and Productivity | Generation states (idle, loading, success, error); prompt suggestions; local generation history |
-| Export | Browser-based WebM export using MediaRecorder; configurable export duration (fixed/auto) |
+### Prompt and Generation
+> Natural language prompt input for animation intent.  
+> Prompt enrichment using visual controls (shape, color, speed, duration).  
+> Backend integration with Google Gemini model for JSON generation.
+
+### Validation and Reliability
+> Server-side input validation for request payloads.  
+> Schema-based validation of AI output before returning data to client.  
+> Structured error responses for invalid AI output or malformed requests.
+
+### Rendering and Playback
+> SVG scene rendering from generated JSON.  
+> GSAP timeline playback for animation sequences.  
+> Supported animation types: move, fade, scale, rotate, color.  
+> Playback controls: play, pause, restart, scrub timeline.
+
+### UX and Productivity
+> Generation status states (idle, loading, success, error).  
+> Prompt suggestions to help users start quickly.  
+> Local history of generated animations in UI state.
+
+### Export
+> Browser-based WebM video export using MediaRecorder.  
+> Configurable export duration (fixed seconds or auto).
 
 > [!NOTE]
 > `src/components/JSONInputPanel.jsx` and `src/components/StatusPanel.jsx` exist in the repository but are not currently mounted in `App`.
@@ -276,18 +306,15 @@ A red square spinning continuously while fading in and out on a dark background.
 
 ## 8. Screenshots and Demo
 
-Add repository assets when available:
-- `docs/images/home.png`
-- `docs/images/generated-animation.png`
-- `docs/images/error-state.png`
-- Demo video or GIF link
+### Screenshots
 
-Placeholder markdown:
+![Screenshot 1](docs/images/SS1.png)
+![Screenshot 2](docs/images/SS2.png)
+![Screenshot 3](docs/images/SS3.png)
 
-```md
-![Home Screen](docs/images/home.png)
-![Generated Animation](docs/images/generated-animation.png)
-```
+### Demo Video
+
+[Watch Demo Video](docs/video/video_20260227_160137.mp4)
 
 ---
 
@@ -427,6 +454,15 @@ SOFTWARE.
 
 ## 13. Author
 
-**Meet Patel**
-
+**Meet Patel**  
 Software engineer focused on building practical, user-facing products with clean architecture and strong developer experience.
+
+---
+
+<div align="center">
+
+Built with React, Express, GSAP, and Gemini API.  
+Repository: <a href="https://github.com/romin711/ANIMATION_ENGINE">ANIMATION_ENGINE</a>  
+Author: <a href="https://github.com/romin711">@romin711</a>
+
+</div>
