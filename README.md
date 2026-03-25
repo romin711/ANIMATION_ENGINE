@@ -48,10 +48,7 @@ cd ../frontend && npm install && npm run dev
 
 - Frontend: http://localhost:5173
 - Backend health: http://localhost:5000/health
-
-> [!IMPORTANT]
-> If `backend/.env.example` contains a real API key, rotate it and replace it with a placeholder before sharing publicly.
-
+- 
 ---
 
 ## 1. Project Overview
