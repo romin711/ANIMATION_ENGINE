@@ -451,7 +451,7 @@ SOFTWARE.
 
 ## 13. Author
 
-**Meet Patel**  
+**Romin Kevadiya**  
 Software engineer focused on building practical, user-facing products with clean architecture and strong developer experience.
 
 ---
