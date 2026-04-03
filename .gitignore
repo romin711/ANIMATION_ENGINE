@@ -38,3 +38,10 @@ Thumbs.db
 *.pid.lock
 tmp/
 temp/
+
+# Archive artifacts
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
