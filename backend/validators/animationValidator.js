@@ -1,102 +1,118 @@
 'use strict';
 
-/**
- * Validates an animation JSON object against our schema contract.
- * Returns { valid: true } or { valid: false, errors: string[] }
- * @param {any} data - The parsed JSON to validate
- * @returns {{ valid: boolean, errors: string[] }}
- */
+const VALID_ELEMENT_TYPES   = ['circle', 'rect', 'text'];
+const VALID_ANIMATION_TYPES = ['move', 'fade', 'scale', 'rotate', 'color', 'blur'];
+const VALID_FONT_WEIGHTS    = ['normal', 'bold'];
+const HEX_RE                = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+function isHex(v)              { return typeof v === 'string' && HEX_RE.test(v); }
+function isPositiveNum(v)      { return typeof v === 'number' && v > 0; }
+function isNonNegativeNum(v)   { return typeof v === 'number' && v >= 0; }
+function inRange(v, lo, hi)    { return typeof v === 'number' && v >= lo && v <= hi; }
+
 function validateAnimationJSON(data) {
   const errors = [];
 
-  if (!data || typeof data !== 'object') {
-    return { valid: false, errors: ['Root value must be a JSON object'] };
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { valid: false, errors: ['Root value must be a JSON object.'] };
   }
 
-  // --- Top-level fields ---
+  // ── version ──────────────────────────────────────────────────────────────
   if (data.version !== '1.0') {
     errors.push('Missing or invalid "version". Expected "1.0".');
   }
 
-  // --- Canvas ---
+  // ── canvas ────────────────────────────────────────────────────────────────
   if (!data.canvas || typeof data.canvas !== 'object') {
     errors.push('Missing "canvas" object.');
   } else {
-    if (typeof data.canvas.width !== 'number') errors.push('"canvas.width" must be a number.');
-    if (typeof data.canvas.height !== 'number') errors.push('"canvas.height" must be a number.');
-    if (typeof data.canvas.background !== 'string') errors.push('"canvas.background" must be a string (hex color).');
+    if (!isPositiveNum(data.canvas.width))   errors.push('"canvas.width" must be a positive number.');
+    if (!isPositiveNum(data.canvas.height))  errors.push('"canvas.height" must be a positive number.');
+    if (!isHex(data.canvas.background))      errors.push('"canvas.background" must be a hex color.');
   }
 
-  // --- Elements ---
+  // ── elements ─────────────────────────────────────────────────────────────
   if (!Array.isArray(data.elements) || data.elements.length === 0) {
     errors.push('"elements" must be a non-empty array.');
   } else {
-    const validTypes = ['circle', 'rect', 'text'];
-    const elementIds = new Set();
-
-    data.elements.forEach(function (el, idx) {
-      const prefix = 'elements[' + idx + ']';
+    const ids = new Set();
+    data.elements.forEach((el, idx) => {
+      const p = 'elements[' + idx + ']';
 
       if (!el.id || typeof el.id !== 'string') {
-        errors.push(prefix + ': "id" must be a non-empty string.');
-      } else if (elementIds.has(el.id)) {
-        errors.push(prefix + ': duplicate element id "' + el.id + '".');
+        errors.push(p + ': "id" must be a non-empty string.');
+      } else if (ids.has(el.id)) {
+        errors.push(p + ': duplicate id "' + el.id + '".');
       } else {
-        elementIds.add(el.id);
+        ids.add(el.id);
       }
 
-      if (!validTypes.includes(el.type)) {
-        errors.push(prefix + ': "type" must be one of: ' + validTypes.join(', ') + '.');
-      }
+      if (!VALID_ELEMENT_TYPES.includes(el.type))  errors.push(p + ': "type" must be circle, rect, or text.');
+      if (typeof el.x !== 'number')                 errors.push(p + ': "x" must be a number.');
+      if (typeof el.y !== 'number')                 errors.push(p + ': "y" must be a number.');
+      if (!isHex(el.fill))                          errors.push(p + ': "fill" must be a hex color.');
+      if (!inRange(el.opacity, 0, 1))               errors.push(p + ': "opacity" must be 0–1.');
 
-      if (typeof el.x !== 'number') errors.push(prefix + ': "x" must be a number.');
-      if (typeof el.y !== 'number') errors.push(prefix + ': "y" must be a number.');
+      if (el.stroke      !== undefined && !isHex(el.stroke))              errors.push(p + ': "stroke" must be a hex color.');
+      if (el.strokeWidth !== undefined && !isNonNegativeNum(el.strokeWidth)) errors.push(p + ': "strokeWidth" must be >= 0.');
+      if (el.blur        !== undefined && !inRange(el.blur, 0, 20))       errors.push(p + ': "blur" must be 0–20.');
 
-      if (el.type === 'circle' && typeof el.radius !== 'number') {
-        errors.push(prefix + ': "radius" must be a number for type "circle".');
+      if (el.type === 'circle') {
+        if (!isPositiveNum(el.radius)) errors.push(p + ': "radius" must be a positive number.');
       }
       if (el.type === 'rect') {
-        if (typeof el.width !== 'number') errors.push(prefix + ': "width" must be a number for type "rect".');
-        if (typeof el.height !== 'number') errors.push(prefix + ': "height" must be a number for type "rect".');
+        if (!isPositiveNum(el.width))  errors.push(p + ': "width" must be a positive number.');
+        if (!isPositiveNum(el.height)) errors.push(p + ': "height" must be a positive number.');
+        if (el.rx !== undefined && !inRange(el.rx, 0, 500)) errors.push(p + ': "rx" must be 0–500.');
       }
-      if (el.type === 'text' && typeof el.content !== 'string') {
-        errors.push(prefix + ': "content" must be a string for type "text".');
+      if (el.type === 'text') {
+        if (typeof el.content !== 'string' || !el.content.trim()) errors.push(p + ': "content" must be a non-empty string.');
+        if (!isPositiveNum(el.fontSize))                           errors.push(p + ': "fontSize" must be a positive number.');
+        if (el.fontWeight !== undefined && !VALID_FONT_WEIGHTS.includes(el.fontWeight))
+          errors.push(p + ': "fontWeight" must be "normal" or "bold".');
       }
     });
   }
 
-  // --- Timeline ---
+  // ── timeline ─────────────────────────────────────────────────────────────
   if (!Array.isArray(data.timeline) || data.timeline.length === 0) {
     errors.push('"timeline" must be a non-empty array.');
   } else {
-    const validAnimTypes = ['move', 'fade', 'scale', 'rotate', 'color'];
-    const elementIds = new Set((data.elements || []).map(function (el) { return el.id; }));
+    const elementIds = new Set((data.elements || []).map(el => el.id));
 
-    data.timeline.forEach(function (anim, idx) {
-      const prefix = 'timeline[' + idx + ']';
+    data.timeline.forEach((anim, idx) => {
+      const p = 'timeline[' + idx + ']';
 
-      if (!anim.id || typeof anim.id !== 'string') {
-        errors.push(prefix + ': "id" must be a non-empty string.');
+      if (!anim.id || typeof anim.id !== 'string')          errors.push(p + ': "id" must be a non-empty string.');
+      if (!anim.target || !elementIds.has(anim.target))     errors.push(p + ': "target" must reference a valid element id. Got: "' + anim.target + '".');
+      if (!VALID_ANIMATION_TYPES.includes(anim.type))       errors.push(p + ': "type" must be one of: ' + VALID_ANIMATION_TYPES.join(', ') + '.');
+      if (!isPositiveNum(anim.duration))                    errors.push(p + ': "duration" must be a positive number.');
+      if (anim.delay   !== undefined && !isNonNegativeNum(anim.delay))   errors.push(p + ': "delay" must be >= 0.');
+      if (anim.ease    !== undefined && typeof anim.ease !== 'string')   errors.push(p + ': "ease" must be a string.');
+      if (anim.repeat  !== undefined && typeof anim.repeat !== 'number') errors.push(p + ': "repeat" must be a number.');
+      if (anim.yoyo    !== undefined && typeof anim.yoyo !== 'boolean')  errors.push(p + ': "yoyo" must be a boolean.');
+
+      // An animation must have EITHER from/to OR keyframes (or both as fallback)
+      const hasFromTo    = anim.to && typeof anim.to === 'object';
+      const hasKeyframes = Array.isArray(anim.keyframes) && anim.keyframes.length >= 2;
+
+      if (!hasFromTo && !hasKeyframes) {
+        errors.push(p + ': must have either "to" object or "keyframes" array.');
       }
-      if (!anim.target || !elementIds.has(anim.target)) {
-        errors.push(prefix + ': "target" must reference a valid element id. Got: "' + anim.target + '".');
-      }
-      if (!validAnimTypes.includes(anim.type)) {
-        errors.push(prefix + ': "type" must be one of: ' + validAnimTypes.join(', ') + '.');
-      }
-      if (typeof anim.duration !== 'number' || anim.duration <= 0) {
-        errors.push(prefix + ': "duration" must be a positive number.');
-      }
-      if (!anim.to || typeof anim.to !== 'object') {
-        errors.push(prefix + ': "to" must be an object with target properties.');
+
+      // Validate keyframes structure if present
+      if (hasKeyframes) {
+        anim.keyframes.forEach((kf, ki) => {
+          const kp = p + '.keyframes[' + ki + ']';
+          if (typeof kf.time !== 'number' || kf.time < 0 || kf.time > 1) {
+            errors.push(kp + ': "time" must be a number between 0 and 1.');
+          }
+        });
       }
     });
   }
 
-  return {
-    valid: errors.length === 0,
-    errors: errors
-  };
+  return { valid: errors.length === 0, errors };
 }
 
-module.exports = { validateAnimationJSON };
+module.exports = { validateAnimationJSON }; 

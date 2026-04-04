@@ -78,10 +78,14 @@ AI 2D Animation Generator helps users create simple motion graphics without manu
 > Schema-based validation of AI output before returning data to client.  
 > Structured error responses for invalid AI output or malformed requests.
 
+### Physics Enrichment
+> Post-validation physics enrichment for motion paths (orbital, bounce, wave, particle, and more).  
+> Non-fatal enrichment pipeline: validated AI JSON is still returned if enrichment fails.
+
 ### Rendering and Playback
 > SVG scene rendering from generated JSON.  
 > GSAP timeline playback for animation sequences.  
-> Supported animation types: move, fade, scale, rotate, color.  
+> Supported animation types: move, fade, scale, rotate, color, blur.  
 > Playback controls: play, pause, restart, scrub timeline.
 
 ### UX and Productivity
@@ -124,6 +128,9 @@ The project uses a two-tier architecture:
 - `controllers/animationController.js`: request validation, service orchestration, response handling
 - `services/geminiService.js`: prompt construction, Gemini API call, JSON parsing
 - `validators/animationValidator.js`: contract validation for animation JSON
+- `processors/AnimationEnricher.js`: post-validation motion enrichment pipeline
+- `physics/*.js`: reusable physics solvers and motion generators
+- `utils/*.js`: shared math/color helpers for enrichment and processing
 - `schema/animationSchema.js`: canonical schema reference
 
 #### Frontend
@@ -152,7 +159,7 @@ The project uses a two-tier architecture:
 ## 5. Project Structure
 
 ```text
-2d_animation_generator/
+ANIMATION_ENGINE/
 ├── .gitignore
 ├── README.md
 ├── backend/
@@ -162,12 +169,26 @@ The project uses a two-tier architecture:
 │   ├── server.js
 │   ├── controllers/
 │   │   └── animationController.js
+│   ├── physics/
+│   │   ├── MotionSolver.js
+│   │   ├── OrbitalMechanics.js
+│   │   ├── ParticleSystem.js
+│   │   ├── PhysicsEngine.js
+│   │   ├── Vector2D.js
+│   │   └── WaveGenerator.js
+│   ├── processors/
+│   │   ├── AnimationEnricher.js
+│   │   ├── KeyframeOptimizer.js
+│   │   └── SceneAnalyzer.js
 │   ├── routes/
 │   │   └── animationRoutes.js
 │   ├── schema/
 │   │   └── animationSchema.js
 │   ├── services/
 │   │   └── geminiService.js
+│   ├── utils/
+│   │   ├── ColorUtils.js
+│   │   └── MathUtils.js
 │   └── validators/
 │       └── animationValidator.js
 └── frontend/
@@ -331,7 +352,9 @@ Success response:
 ```json
 {
   "status": "ok",
-  "message": "AI Animation Backend is running"
+  "message": "AI Animation Backend is running",
+  "env": "development",
+  "timestamp": "2026-04-04T15:22:11.228Z"
 }
 ```
 
@@ -350,14 +373,38 @@ Request body:
 }
 ```
 
+Request constraints:
+- `description` must be a non-empty string
+- max `description` length is 1000 characters
+- JSON body size limit is 50kb
+
 Success response (200):
 ```json
 {
   "animation": {
     "version": "1.0",
     "canvas": { "width": 800, "height": 450, "background": "#1a1a2e" },
-    "elements": [],
-    "timeline": []
+    "elements": [
+      {
+        "id": "orb-1",
+        "type": "circle",
+        "x": 220,
+        "y": 220,
+        "radius": 24,
+        "fill": "#38bdf8",
+        "opacity": 1
+      }
+    ],
+    "timeline": [
+      {
+        "id": "move-1",
+        "target": "orb-1",
+        "type": "move",
+        "to": { "x": 620, "y": 220 },
+        "duration": 2,
+        "ease": "power2.inOut"
+      }
+    ]
   }
 }
 ```
@@ -385,6 +432,14 @@ Server error (500):
 {
   "error": "Internal server error",
   "details": "Error message"
+}
+```
+
+Timeout example (500):
+```json
+{
+  "error": "Internal server error",
+  "details": "Gemini API timed out after 25 seconds."
 }
 ```
 
