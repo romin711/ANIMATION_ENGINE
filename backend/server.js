@@ -50,15 +50,22 @@ app.use(function (req, res) {
 // Global error handler
 // ---------------------------------------------------------------------------
 app.use(function (err, req, res, next) { // eslint-disable-line no-unused-vars
+  const statusCode = err.statusCode && err.statusCode >= 400 && err.statusCode < 600
+    ? err.statusCode
+    : 500;
+
   if (NODE_ENV === 'development') {
     console.error('[Server Error]', err.stack || err.message);
   } else {
     console.error('[Server Error]', err.message);
   }
-  res.status(500).json({
-    error: 'Internal server error',
+
+  const payload = {
+    error: statusCode >= 500 ? 'Upstream service error' : 'Request failed',
     details: err.message
-  });
+  };
+
+  res.status(statusCode).json(payload);
 });
 
 // ---------------------------------------------------------------------------

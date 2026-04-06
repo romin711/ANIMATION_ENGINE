@@ -29,6 +29,7 @@ pnpm-debug.log*
 # OS / editor files
 .DS_Store
 Thumbs.db
+.codex
 .vscode/
 .idea/
 **/.history/
@@ -46,3 +47,6 @@ temp/
 *.tar.gz
 *.tgz
 *.7z
+
+# Local planning/docs artifacts
+LLM_TO_BUILDER_REFACTOR_GUIDE.md

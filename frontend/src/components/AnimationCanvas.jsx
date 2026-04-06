@@ -33,8 +33,19 @@ export default function AnimationCanvas({ animationData, status, errorMessage })
       const targetEl = svgRef.current.querySelector('#' + CSS.escape(anim.target))
       if (!targetEl) return
 
-      const gsapVars = buildGsapVars(anim)
-      masterTimeline.fromTo(targetEl, gsapVars.from, gsapVars.to, anim.delay || 0)
+      const tween = buildGsapTween(anim, targetEl)
+      if (!tween) return
+
+      if (tween.from && Object.keys(tween.from).length > 0) {
+        gsap.set(targetEl, tween.from)
+      }
+
+      if (tween.mode === 'to') {
+        masterTimeline.to(targetEl, tween.to, anim.delay || 0)
+        return
+      }
+
+      masterTimeline.fromTo(targetEl, tween.from, tween.to, anim.delay || 0)
     })
 
     return () => {
@@ -309,28 +320,115 @@ function renderElement(el) {
   return null
 }
 
-function buildGsapVars(anim) {
+function getPositionAttrNames(targetEl) {
+  const tagName = targetEl?.tagName?.toLowerCase()
+
+  if (tagName === 'circle') return ['cx', 'cy']
+  if (tagName === 'rect') return ['x', 'y']
+  if (tagName === 'text') return ['x', 'y']
+
+  return ['x', 'y']
+}
+
+function buildPositionAttr(targetEl, point) {
+  if (!point) return null
+
+  const [xAttr, yAttr] = getPositionAttrNames(targetEl)
+  const attr = {}
+
+  if (point.x !== undefined) attr[xAttr] = point.x
+  if (point.y !== undefined) attr[yAttr] = point.y
+
+  return Object.keys(attr).length > 0 ? attr : null
+}
+
+function buildFrameVars(frame, type, targetEl) {
+  const vars = {}
+
+  if (type === 'move') {
+    const attr = buildPositionAttr(targetEl, frame)
+    if (attr) vars.attr = attr
+  }
+
+  if (frame.opacity !== undefined) vars.opacity = frame.opacity
+  if (frame.rotation !== undefined) vars.rotation = frame.rotation
+
+  if (frame.scale !== undefined) {
+    vars.scaleX = frame.scale
+    vars.scaleY = frame.scale
+  }
+
+  if (frame.scaleX !== undefined) vars.scaleX = frame.scaleX
+  if (frame.scaleY !== undefined) vars.scaleY = frame.scaleY
+
+  return vars
+}
+
+function hasTransformProps(vars) {
+  return (
+    vars.scale !== undefined ||
+    vars.scaleX !== undefined ||
+    vars.scaleY !== undefined ||
+    vars.rotation !== undefined
+  )
+}
+
+function buildKeyframedTween(anim, targetEl, baseTween) {
+  if (!Array.isArray(anim.keyframes) || anim.keyframes.length < 2) return null
+
+  const totalDuration = anim.duration || 1
+  const from = buildFrameVars(anim.keyframes[0], anim.type, targetEl)
+  const keyframes = []
+  let needsTransformOrigin = hasTransformProps(from)
+
+  for (let index = 1; index < anim.keyframes.length; index++) {
+    const prev = anim.keyframes[index - 1]
+    const curr = anim.keyframes[index]
+    const frameVars = buildFrameVars(curr, anim.type, targetEl)
+    const segmentDuration = Math.max(0.001, (curr.time - prev.time) * totalDuration)
+
+    needsTransformOrigin = needsTransformOrigin || hasTransformProps(frameVars)
+    keyframes.push(Object.assign({ duration: segmentDuration, ease: 'none' }, frameVars))
+  }
+
+  if (keyframes.length === 0) return null
+
+  const to = {
+    ease: 'none',
+    repeat: baseTween.repeat,
+    yoyo: baseTween.yoyo,
+    keyframes
+  }
+
+  if (needsTransformOrigin) to.transformOrigin = '50% 50%'
+
+  return { mode: 'to', from, to }
+}
+
+function buildGsapTween(anim, targetEl) {
   const ease = anim.ease || 'power2.inOut'
   const duration = anim.duration || 1
   const repeat = anim.repeat ?? 0
   const yoyo = anim.yoyo || false
   const toBase = { duration, ease, repeat, yoyo }
+  const keyframedTween = buildKeyframedTween(anim, targetEl, toBase)
+
+  if (keyframedTween) return keyframedTween
 
   if (anim.type === 'move') {
     const fromVars = {}, toVars = { ...toBase }
-    if (anim.from) {
-      if (anim.from.x !== undefined) fromVars.attr = { ...fromVars.attr, cx: anim.from.x, x: anim.from.x }
-      if (anim.from.y !== undefined) fromVars.attr = { ...fromVars.attr, cy: anim.from.y, y: anim.from.y }
-    }
-    if (anim.to) {
-      if (anim.to.x !== undefined) toVars.attr = { ...toVars.attr, cx: anim.to.x, x: anim.to.x }
-      if (anim.to.y !== undefined) toVars.attr = { ...toVars.attr, cy: anim.to.y, y: anim.to.y }
-    }
-    return { from: fromVars, to: toVars }
+    const fromAttr = buildPositionAttr(targetEl, anim.from)
+    const toAttr = buildPositionAttr(targetEl, anim.to)
+
+    if (fromAttr) fromVars.attr = fromAttr
+    if (toAttr) toVars.attr = toAttr
+
+    return { mode: 'fromTo', from: fromVars, to: toVars }
   }
-  if (anim.type === 'fade') return { from: { opacity: anim.from?.opacity ?? 0 }, to: { ...toBase, opacity: anim.to?.opacity ?? 1 } }
-  if (anim.type === 'scale') return { from: { scaleX: anim.from?.scaleX ?? 1, scaleY: anim.from?.scaleY ?? 1 }, to: { ...toBase, scaleX: anim.to?.scaleX ?? 1, scaleY: anim.to?.scaleY ?? 1, transformOrigin: '50% 50%' } }
-  if (anim.type === 'rotate') return { from: { rotation: anim.from?.rotation ?? 0 }, to: { ...toBase, rotation: anim.to?.rotation ?? 360, transformOrigin: '50% 50%' } }
-  if (anim.type === 'color') return { from: { attr: { fill: anim.from?.fill || '#ffffff' } }, to: { ...toBase, attr: { fill: anim.to?.fill || '#000000' } } }
-  return { from: {}, to: toBase }
+
+  if (anim.type === 'fade') return { mode: 'fromTo', from: { opacity: anim.from?.opacity ?? 0 }, to: { ...toBase, opacity: anim.to?.opacity ?? 1 } }
+  if (anim.type === 'scale') return { mode: 'fromTo', from: { scaleX: anim.from?.scaleX ?? 1, scaleY: anim.from?.scaleY ?? 1 }, to: { ...toBase, scaleX: anim.to?.scaleX ?? 1, scaleY: anim.to?.scaleY ?? 1, transformOrigin: '50% 50%' } }
+  if (anim.type === 'rotate') return { mode: 'fromTo', from: { rotation: anim.from?.rotation ?? 0 }, to: { ...toBase, rotation: anim.to?.rotation ?? 360, transformOrigin: '50% 50%' } }
+  if (anim.type === 'color') return { mode: 'fromTo', from: { attr: { fill: anim.from?.fill || '#ffffff' } }, to: { ...toBase, attr: { fill: anim.to?.fill || '#000000' } } }
+  return { mode: 'fromTo', from: {}, to: toBase }
 }

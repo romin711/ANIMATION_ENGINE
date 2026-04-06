@@ -2,10 +2,10 @@
 
 const { analyzeScene, INTENT }                              = require('./SceneAnalyzer');
 const { optimizeKeyframes }                                 = require('./KeyframeOptimizer');
-const { positionsToKeyframes }                              = require('../physics/MotionSolver');
+const { positionsToKeyframes, buildParticleTimelineEntries } = require('../physics/MotionSolver');
 const { simulateGravityBounce, simulateSpring,
         simulatePendulum, simulateProjectile }              = require('../physics/PhysicsEngine');
-const { simulateParticleBurst, simulateFloatingParticles }  = require('../physics/ParticleSystem');
+const { simulateParticleBurst }                             = require('../physics/ParticleSystem');
 const { circularOrbit, ellipticalOrbit,
         figure8Path, epicycloidPath }                       = require('../physics/OrbitalMechanics');
 const { sineWavePath, organicFloatPath,
@@ -14,6 +14,8 @@ const { round }                                             = require('../utils/
 
 const CANVAS_W = 800;
 const CANVAS_H = 450;
+const PARTICLE_COUNT = 6;
+const PARTICLE_SIZE_PATTERN = [0.4, 0.55, 0.7, 0.5, 0.65, 0.45];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Geometry helpers
@@ -49,6 +51,135 @@ function estimateOrbitRadius(el, center) {
 
 function estimateStartAngleDeg(el, center) {
   return Math.atan2((el.y || 0) - center.y, (el.x || 0) - center.x) * 180 / Math.PI;
+}
+
+function createStableSeed(input) {
+  let hash = 0;
+  const str = String(input || '');
+
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  }
+
+  return hash || 1;
+}
+
+function pickParticleSize(index) {
+  return PARTICLE_SIZE_PATTERN[index % PARTICLE_SIZE_PATTERN.length];
+}
+
+function cloneParticleElement(templateEl, particleId, firstFrame, index) {
+  const sizeScale = pickParticleSize(index);
+  const clone = Object.assign({}, templateEl, {
+    id: particleId,
+    x: firstFrame.x,
+    y: firstFrame.y,
+    opacity: firstFrame.opacity !== undefined ? firstFrame.opacity : (templateEl.opacity ?? 1)
+  });
+
+  if (clone.type === 'circle') {
+    clone.radius = round(Math.max(2, (templateEl.radius || 10) * sizeScale), 1);
+  } else if (clone.type === 'rect') {
+    clone.width = round(Math.max(4, (templateEl.width || 20) * sizeScale), 1);
+    clone.height = round(Math.max(4, (templateEl.height || 20) * sizeScale), 1);
+    if (clone.rx !== undefined) clone.rx = round(clone.rx * sizeScale, 1);
+  } else if (clone.type === 'text') {
+    clone.fontSize = round(Math.max(10, (templateEl.fontSize || 24) * sizeScale), 1);
+  }
+
+  return clone;
+}
+
+function addMoveFallback(anim, keyframes) {
+  const first = keyframes[0];
+  const last  = keyframes[keyframes.length - 1];
+
+  return Object.assign({}, anim, {
+    from: Object.assign({}, anim.from, { x: first.x, y: first.y }),
+    to:   Object.assign({}, anim.to,   { x: last.x,  y: last.y })
+  });
+}
+
+function createParticleScaleAnimation(baseAnim, particleId, history, index) {
+  const first = history[0];
+  const last  = history[history.length - 1];
+
+  return {
+    id:       baseAnim.id + '-p' + index + '-scale',
+    target:   particleId,
+    type:     'scale',
+    from:     { scaleX: first.scale ?? 1, scaleY: first.scale ?? 1 },
+    to:       { scaleX: last.scale ?? 1,  scaleY: last.scale ?? 1 },
+    duration: baseAnim.duration,
+    delay:    baseAnim.delay || 0,
+    ease:     'power1.out',
+    repeat:   0,
+    yoyo:     false
+  };
+}
+
+function createParticleFadeAnimation(baseAnim, particleId, history, index, templateOpacity) {
+  const first = history[0];
+  const last  = history[history.length - 1];
+
+  return {
+    id:       baseAnim.id + '-p' + index + '-fade',
+    target:   particleId,
+    type:     'fade',
+    from:     { opacity: first.opacity ?? templateOpacity ?? 1 },
+    to:       { opacity: last.opacity ?? 0 },
+    duration: baseAnim.duration,
+    delay:    baseAnim.delay || 0,
+    ease:     'power1.out',
+    repeat:   0,
+    yoyo:     false
+  };
+}
+
+function expandParticleAnimation(anim, el) {
+  const emitterX = (anim.from && anim.from.x != null) ? anim.from.x : el.x;
+  const emitterY = (anim.from && anim.from.y != null) ? anim.from.y : el.y;
+  const seed = createStableSeed(anim.id + ':' + el.id);
+
+  const histories = simulateParticleBurst({
+    emitterX,
+    emitterY,
+    count:     PARTICLE_COUNT,
+    duration:  anim.duration || 2,
+    sampleFPS: 24,
+    seed
+  }).filter(history => history.length >= 2);
+
+  if (histories.length === 0) return null;
+
+  const particleIds = histories.map((_, index) => el.id + '__' + anim.id + '__p' + (index + 1));
+  const particleElements = histories.map((history, index) =>
+    cloneParticleElement(el, particleIds[index], history[0], index)
+  );
+
+  const moveEntries = buildParticleTimelineEntries(anim, particleIds, histories).map((entry, index) => {
+    const optimized = optimizeKeyframes(entry.keyframes, 'move');
+    return Object.assign(
+      addMoveFallback(entry, optimized),
+      {
+        keyframes: optimized,
+        ease: anim.ease || 'power2.out'
+      }
+    );
+  });
+
+  const fadeEntries = histories.map((history, index) =>
+    createParticleFadeAnimation(anim, particleIds[index], history, index, el.opacity)
+  );
+
+  const scaleEntries = histories.map((history, index) =>
+    createParticleScaleAnimation(anim, particleIds[index], history, index)
+  );
+
+  return {
+    elements: particleElements,
+    timeline: moveEntries.concat(fadeEntries, scaleEntries)
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,35 +376,57 @@ function enrichAnimation(animationJSON) {
   const elementMap = {};
   (animationJSON.elements || []).forEach(el => { elementMap[el.id] = el; });
 
-  const enrichedTimeline = animationJSON.timeline.map(anim => {
+  const enrichedElements = [].concat(animationJSON.elements || []);
+  const enrichedTimeline = [];
+
+  (animationJSON.timeline || []).forEach(anim => {
     const intent  = animationIntents[anim.id] || INTENT.STANDARD;
     const element = elementMap[anim.target];
 
     // Only apply physics to move animations — non-move (fade/scale/rotate/color/blur)
     // are handled perfectly well by GSAP's from/to without physics.
     if (!element || intent === INTENT.STANDARD || anim.type !== 'move') {
-      return anim;
+      enrichedTimeline.push(anim);
+      return;
+    }
+
+    if (intent === INTENT.PARTICLE) {
+      const expansion = expandParticleAnimation(anim, element);
+      if (!expansion) {
+        enrichedTimeline.push(anim);
+        return;
+      }
+
+      enrichedElements.push.apply(enrichedElements, expansion.elements);
+      enrichedTimeline.push.apply(enrichedTimeline, expansion.timeline);
+      return;
     }
 
     try {
       const positions = computePositions(intent, anim, element, animationJSON.elements);
-      if (!positions || positions.length < 3) return anim;
+      if (!positions || positions.length < 3) {
+        enrichedTimeline.push(anim);
+        return;
+      }
 
       const keyframes  = positionsToKeyframes(positions);
       const optimized  = optimizeKeyframes(keyframes, 'move');
 
-      return Object.assign({}, anim, {
+      enrichedTimeline.push(Object.assign({}, anim, {
         keyframes:      optimized,
         _physicsIntent: intent
         // from/to kept as fallback for frontends that don't support keyframes yet
-      });
+      }));
     } catch (_err) {
       // Physics simulation failed — return original unchanged
-      return anim;
+      enrichedTimeline.push(anim);
     }
   });
 
-  return Object.assign({}, animationJSON, { timeline: enrichedTimeline });
+  return Object.assign({}, animationJSON, {
+    elements: enrichedElements,
+    timeline: enrichedTimeline
+  });
 }
 
 module.exports = { enrichAnimation };
