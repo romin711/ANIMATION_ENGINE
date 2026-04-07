@@ -7,6 +7,8 @@ export default function AnimationCanvas({ animationData, status, errorMessage })
   const timelineRef = useRef(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [displayDuration, setDisplayDuration] = useState(0)
   const [isExporting, setIsExporting] = useState(false)
   const [exportDuration, setExportDuration] = useState(5)
 
@@ -17,13 +19,31 @@ export default function AnimationCanvas({ animationData, status, errorMessage })
       timelineRef.current = null
     }
 
-    if (!animationData || !svgRef.current) return
+    setIsPlaying(false)
+    setProgress(0)
+    setCurrentTime(0)
+
+    if (!animationData || !svgRef.current) {
+      setDisplayDuration(0)
+      return
+    }
+
+    const duration = getDisplayDuration(animationData)
+    const hasInfiniteLoop = hasInfiniteAnimations(animationData)
+    setDisplayDuration(duration)
 
     const masterTimeline = gsap.timeline({
       onUpdate: function() {
-        setProgress(this.progress() * 100)
+        const rawTime = this.time()
+        const nextTime = normalizePlaybackTime(rawTime, duration, hasInfiniteLoop)
+        setCurrentTime(nextTime)
+        setProgress(duration > 0 ? (nextTime / duration) * 100 : 0)
       },
-      onComplete: () => setIsPlaying(false),
+      onComplete: () => {
+        setIsPlaying(false)
+        setCurrentTime(duration)
+        setProgress(100)
+      },
       onStart: () => setIsPlaying(true)
     })
     
@@ -75,7 +95,9 @@ export default function AnimationCanvas({ animationData, status, errorMessage })
     const value = parseFloat(e.target.value)
     setProgress(value)
     if (timelineRef.current) {
-      timelineRef.current.progress(value / 100)
+      const nextTime = displayDuration > 0 ? (value / 100) * displayDuration : 0
+      timelineRef.current.pause(nextTime, false)
+      setCurrentTime(nextTime)
       if (isPlaying) timelineRef.current.pause()
       setIsPlaying(false)
     }
@@ -88,7 +110,7 @@ export default function AnimationCanvas({ animationData, status, errorMessage })
     // Save current GSAP state
     const wasPlaying = isPlaying
     if (wasPlaying) timelineRef.current.pause()
-    const originalProgress = timelineRef.current.progress()
+    const originalTime = currentTime
 
     // Setup invisible canvas for stream
     const canvas = document.createElement('canvas')
@@ -113,15 +135,17 @@ export default function AnimationCanvas({ animationData, status, errorMessage })
       
       setIsExporting(false)
       // Restore initial state
-      timelineRef.current.progress(originalProgress)
+      timelineRef.current.pause(originalTime, false)
+      setCurrentTime(originalTime)
+      setProgress(displayDuration > 0 ? (originalTime / displayDuration) * 100 : 0)
       if (wasPlaying) togglePlay()
     }
 
     recorder.start()
 
-    const baseDuration = timelineRef.current.duration()
+    const baseDuration = displayDuration || getDisplayDuration(animationData)
     const targetDuration = exportDuration === 'auto' 
-      ? (baseDuration === Infinity ? 5 : baseDuration)
+      ? (baseDuration > 0 ? baseDuration : 5)
       : exportDuration
 
     timelineRef.current.pause(0)
@@ -265,7 +289,7 @@ export default function AnimationCanvas({ animationData, status, errorMessage })
         {/* Timeline Scrubber */}
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-zinc-500 font-mono w-8 text-right">
-            {(timelineRef.current?.time() || 0).toFixed(1)}s
+            {currentTime.toFixed(1)}s
           </span>
           <div className="flex-1 relative flex items-center h-4 cursor-pointer group">
             <input
@@ -288,7 +312,7 @@ export default function AnimationCanvas({ animationData, status, errorMessage })
             />
           </div>
           <span className="text-[10px] text-zinc-500 font-mono w-8">
-            {(timelineRef.current?.duration() || 0).toFixed(1)}s
+            {displayDuration.toFixed(1)}s
           </span>
         </div>
 
@@ -311,6 +335,34 @@ export default function AnimationCanvas({ animationData, status, errorMessage })
       </div>
     </div>
   )
+}
+
+function getAnimationSegmentDuration(anim) {
+  const baseDuration = anim?.duration || 0
+  const repeatCount = anim?.repeat === -1 ? 0 : Math.max(0, anim?.repeat || 0)
+  return baseDuration * (repeatCount + 1)
+}
+
+function getDisplayDuration(animationData) {
+  const timeline = animationData?.timeline || []
+  if (timeline.length === 0) return 0
+
+  return timeline.reduce((maxDuration, anim) => {
+    const endTime = (anim?.delay || 0) + getAnimationSegmentDuration(anim)
+    return Math.max(maxDuration, endTime)
+  }, 0)
+}
+
+function hasInfiniteAnimations(animationData) {
+  return Boolean((animationData?.timeline || []).some((anim) => anim?.repeat === -1))
+}
+
+function normalizePlaybackTime(rawTime, duration, hasInfiniteLoop) {
+  if (!duration || duration <= 0) return 0
+  if (!hasInfiniteLoop) return Math.min(rawTime, duration)
+
+  const wrappedTime = rawTime % duration
+  return wrappedTime === 0 && rawTime > 0 ? duration : wrappedTime
 }
 
 function renderElement(el) {

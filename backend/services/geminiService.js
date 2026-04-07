@@ -1,131 +1,69 @@
 'use strict';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SYSTEM PROMPT
-// ─────────────────────────────────────────────────────────────────────────────
+const {
+  PLAN_VERSION,
+  PLAN_SCENE_TYPES,
+  PLAN_SUBJECT_TYPES,
+  PLAN_MOTION_TYPES,
+  PLAN_COMPLEXITY_LEVELS,
+  PLAN_MOOD_TYPES
+} = require('../schema/animationPlanSchema');
+const { validateAnimationPlan } = require('../validators/animationPlanValidator');
+const { createIntentPlan } = require('../processors/PromptClassifier');
 
 const SYSTEM_PROMPT = `
-You are a professional 2D motion graphics artist and animation scripter.
-Your job is to convert a text description into a basic, clean 2D animation JSON.
+You are an animation intent planner for a deterministic 2D animation builder.
+Return ONLY a tiny JSON plan object. No markdown. No comments. No explanation.
 
-You MUST return ONLY a valid raw JSON object.
-No markdown, no backticks, no explanation. First character { last character }.
-Return minified JSON on a single line. Do not pretty-print.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SCHEMA CONTRACT
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
+Required schema:
 {
   "version": "1.0",
-  "canvas": { "width": 800, "height": 450, "background": "<hex>" },
-  "elements": [ <element>, ... ],
-  "timeline": [ <animation>, ... ]
+  "sceneType": "single-object | orbit | chart | text | abstract | multi-object",
+  "subject": {
+    "type": "square | circle | planet | candlestick | text | custom",
+    "label": "short string",
+    "color": "#hex"
+  },
+  "secondarySubjects": [
+    {
+      "type": "square | circle | planet | candlestick | text | custom",
+      "label": "short string",
+      "color": "#hex"
+    }
+  ],
+  "motion": {
+    "type": "spin | orbit | fade | bounce | float | pulse | reveal",
+    "loop": true
+  },
+  "style": {
+    "complexity": "basic | medium | rich",
+    "mood": "clean | playful | dramatic | calm | futuristic"
+  }
 }
 
-ELEMENT:
-{
-  "id": "<unique string>",
-  "type": "circle | rect | text",
-  "x": <number>,  "y": <number>,
-  "radius": <number — circle only>,
-  "width": <number — rect only>,  "height": <number — rect only>,
-  "rx": <0–100, optional — rounded corners on rect>,
-  "content": "<string — text only>",
-  "fontSize": <number — text only>,
-  "fontWeight": "normal | bold",
-  "fill": "<hex>",
-  "stroke": "<hex, optional>",
-  "strokeWidth": <number, optional>,
-  "opacity": <0–1>,
-  "blur": <0–20, optional>
-}
+Rules:
+- Keep it tiny.
+- No coordinates.
+- No canvas config.
+- No element arrays.
+- No timeline arrays.
+- No more than 2 secondary subjects.
+- Keep labels short and generic.
+- If unsure, choose the simplest matching plan.
 
-ANIMATION:
-{
-  "id": "<unique string>",
-  "target": "<element id>",
-  "type": "move | fade | scale | rotate | color | blur",
-  "from": { <prop: value> },
-  "to":   { <prop: value> },
-  "duration": <seconds, positive>,
-  "delay": <seconds, 0+>,
-  "ease": "<GSAP ease string>",
-  "repeat": <-1 | 0 | N>,
-  "yoyo": <true | false>
-}
-
-EASE OPTIONS:
-"none", "power1.out", "power2.out", "power2.inOut", "power3.out",
-"power4.out", "back.out(1.7)", "back.in(1.7)", "elastic.out(1, 0.3)",
-"bounce.out", "circ.out", "expo.out", "sine.inOut", "sine.out"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHYSICS NAMING — CRITICAL
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-The backend applies real physics simulations to elements based on their ID names.
-USE THESE KEYWORDS IN ELEMENT IDs TO TRIGGER THE RIGHT SIMULATION:
-
-  orbit / revolv / satellite / circling → circular orbit path (real math)
-  ellips / comet / oval             → elliptical orbit (Kepler-style)
-  bounce / fall / drop / gravity    → gravity + elastic bounce
-  spring / elastic / wobbl          → spring physics (Hooke's Law)
-  pendulum / swing / sway           → pendulum equation
-  spiral / vortex / swirl           → expanding spiral path
-  wave / ripple / oscillat          → sine wave travel path
-  float / drift / hover / bubble    → organic noise-based float
-  lissajous / knot / weave          → Lissajous curve (frequency ratios)
-  figure8 / infinity / loop-8       → figure-8 lemniscate path
-  spark / burst / particle / confetti → particle burst system
-  projectile / launch / cannon      → parabolic arc with drag
-
-Use explicit orbit keywords in the id. Do NOT rely on generic names like
-"star", "dot", "orb", or "ball" to trigger orbit physics.
-
-EXAMPLE: An orbiting moon should have id "moon-orbit" or "orbit-satellite-1".
-EXAMPLE: A bouncing ball should have id "ball-bounce" or "gravity-ball".
-EXAMPLE: A floating bubble should have id "bubble-float-1".
-
-The physics engine will automatically compute mathematically accurate
-keyframe paths for these — you just need to provide the correct id and
-a rough starting position. The from/to values act as hints for start/end.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FAST OUTPUT RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Prefer very basic scenes by default.
-2. Simple prompts: 1–2 elements total.
-3. Medium prompts: 2–4 elements total.
-4. Only use more than 4 elements if the user explicitly asks for a detailed scene.
-5. Avoid background decoration unless it is essential.
-6. Every element should usually have exactly 1 timeline entry.
-7. Keep JSON compact. No duplicate layers. No extra effects.
-8. If one object is enough, return one object.
-9. Use repeat:-1 only for clearly continuous motion like spin or orbit.
-10. Colors: pick a cohesive 2–3 color palette.
-11. Avoid blur unless the prompt clearly needs glow.
-12. Keep the result simple but satisfying.
-13. Return only the necessary animation data for a satisfying result.
-14. For a single object prompt, use a single main subject only.
-15. Keep total timeline entries minimal while preserving the main motion.
-
-RETURN ONLY RAW JSON.
+Examples:
+- "red square spinning" => single-object square with spin
+- "blue planet orbiting a star" => orbit scene with planet subject and star secondarySubjects
+- "show text \\"HELLO\\"" => text scene with subject.label "HELLO"
+- "futuristic city with floating neon particles" => multi-object or abstract scene with city subject and particles secondarySubjects
 `.trim();
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const GEMINI_TIMEOUT_MS = readIntEnv('GEMINI_TIMEOUT_MS', 60000);
 const GEMINI_MAX_RETRIES = readIntEnv('GEMINI_MAX_RETRIES', 2);
-const GEMINI_MAX_OUTPUT_TOKENS = readIntEnv('GEMINI_MAX_OUTPUT_TOKENS', 1536);
-const GEMINI_COMPACT_MAX_OUTPUT_TOKENS = readIntEnv('GEMINI_COMPACT_MAX_OUTPUT_TOKENS', 768);
-const GEMINI_MICRO_MAX_OUTPUT_TOKENS = readIntEnv('GEMINI_MICRO_MAX_OUTPUT_TOKENS', 512);
-const GEMINI_TEMPERATURE = readFloatEnv('GEMINI_TEMPERATURE', 0.2);
-const GEMINI_TOP_P = readFloatEnv('GEMINI_TOP_P', 0.8);
-const GEMINI_COMPACT_TEMPERATURE = readFloatEnv('GEMINI_COMPACT_TEMPERATURE', 0.1);
-const GEMINI_MICRO_TEMPERATURE = readFloatEnv('GEMINI_MICRO_TEMPERATURE', 0.05);
+const GEMINI_PLAN_MAX_OUTPUT_TOKENS = readIntEnv('GEMINI_PLAN_MAX_OUTPUT_TOKENS', 256);
+const GEMINI_PLAN_TEMPERATURE = readFloatEnv('GEMINI_PLAN_TEMPERATURE', 0.1);
+const GEMINI_TOP_P = readFloatEnv('GEMINI_TOP_P', 0.7);
 const GEMINI_MAX_CONCURRENCY = readIntEnv('GEMINI_MAX_CONCURRENCY', 1);
 const GEMINI_MIN_INTERVAL_MS = readIntEnv('GEMINI_MIN_INTERVAL_MS', 1500);
 const GEMINI_CACHE_TTL_MS = readIntEnv('GEMINI_CACHE_TTL_MS', 300000);
@@ -150,7 +88,9 @@ function readFloatEnv(name, fallback) {
 }
 
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
 }
 
 function cloneJSON(value) {
@@ -240,108 +180,32 @@ function scheduleGeminiRequest(task) {
   });
 }
 
-function buildPromptText(description, mode) {
-  if (mode === 'normal') {
-    return description + '\n\nESSENTIAL OUTPUT MODE:\n'
-      + '- Return only the minimum necessary animation data.\n'
-      + '- Do not add extra decorative layers unless clearly needed.\n'
-      + '- Use 1 or 2 elements when possible.\n'
-      + '- Use 1 timeline entry per element when possible.\n'
-      + '- Return minified one-line JSON only.';
-  }
-
-  if (mode === 'compact') {
-    return description + '\n\nCOMPACT MODE:\n'
-      + '- Return a smaller valid scene.\n'
-      + '- Use 1 to 3 elements maximum.\n'
-      + '- Use 1 timeline entry per element when possible.\n'
-      + '- Use no background layer unless essential.\n'
-      + '- Use no decorative accent layer unless essential.\n'
-      + '- Prefer concise ids and avoid decorative extras unless essential.\n'
-      + '- If the scene would be too large, simplify it rather than returning partial JSON.\n'
-      + '- Return minified one-line JSON only.\n'
-      + '- Return only one complete JSON object.';
-  }
-
-  return description + '\n\nMICRO MODE:\n'
-    + '- Return the simplest valid animation that matches the request.\n'
-    + '- Use 1 to 2 elements maximum.\n'
-    + '- Use only the most important motion.\n'
-    + '- Avoid optional props unless essential.\n'
-    + '- No decorative extras, no duplicate layers, no unnecessary repeats.\n'
-    + '- Return minified one-line JSON only.\n'
-    + '- If needed, simplify the scene aggressively rather than returning partial JSON.';
+function buildPromptText(description) {
+  return [
+    'User prompt:',
+    description,
+    '',
+    'Heuristic hint from backend:',
+    JSON.stringify(createIntentPlan(description)),
+    '',
+    'Use the user prompt as the source of truth. You may refine the heuristic hint if it is incomplete.',
+    'Return only the minimal animation plan JSON.'
+  ].join('\n');
 }
 
-function estimatePromptComplexity(description) {
-  const lower = description.toLowerCase();
-  const wordCount = description.trim().split(/\s+/).filter(Boolean).length;
-  const complexSignals = [
-    'cinematic', 'complex', 'multi', 'multiple', 'scene', 'landscape', 'galaxy',
-    'city', 'crowd', 'particles', 'particle', 'many', 'several', 'detailed'
-  ];
-  const simpleSignals = [
-    'single', 'one', 'simple', 'square', 'circle', 'rect', 'rectangle',
-    'candlestick', 'candle stick', 'logo', 'icon', 'planet', 'star', 'ball'
-  ];
-
-  let score = 0;
-  score += Math.max(0, wordCount - 12);
-  score += (description.match(/,/g) || []).length * 2;
-  score += (description.match(/\band\b/gi) || []).length;
-
-  if (complexSignals.some(signal => lower.includes(signal))) score += 4;
-  if (simpleSignals.some(signal => lower.includes(signal))) score -= 2;
-
-  if (score <= 1) return 'simple';
-  if (score <= 5) return 'medium';
-  return 'complex';
-}
-
-function getModeOrder(description) {
-  const complexity = estimatePromptComplexity(description);
-
-  if (complexity === 'simple') return ['micro', 'compact', 'normal'];
-  if (complexity === 'medium') return ['compact', 'micro', 'normal'];
-  return ['normal', 'compact', 'micro'];
-}
-
-function getModeGenerationConfig(mode) {
-  if (mode === 'micro') {
-    return {
-      temperature: GEMINI_MICRO_TEMPERATURE,
-      maxOutputTokens: GEMINI_MICRO_MAX_OUTPUT_TOKENS
-    };
-  }
-
-  if (mode === 'compact') {
-    return {
-      temperature: GEMINI_COMPACT_TEMPERATURE,
-      maxOutputTokens: GEMINI_COMPACT_MAX_OUTPUT_TOKENS
-    };
-  }
-
-  return {
-    temperature: GEMINI_TEMPERATURE,
-    maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS
-  };
-}
-
-function buildPayload(description, mode) {
-  const config = getModeGenerationConfig(mode);
-
+function buildPayload(description) {
   return {
     systemInstruction: {
       parts: [{ text: SYSTEM_PROMPT }]
     },
     contents: [{
-      role:  'user',
-      parts: [{ text: buildPromptText(description, mode) }]
+      role: 'user',
+      parts: [{ text: buildPromptText(description) }]
     }],
     generationConfig: {
-      temperature:      config.temperature,
-      topP:             GEMINI_TOP_P,
-      maxOutputTokens:  config.maxOutputTokens,
+      temperature: GEMINI_PLAN_TEMPERATURE,
+      topP: GEMINI_TOP_P,
+      maxOutputTokens: GEMINI_PLAN_MAX_OUTPUT_TOKENS,
       responseMimeType: 'application/json'
     }
   };
@@ -350,7 +214,9 @@ function buildPayload(description, mode) {
 function getCandidateText(data) {
   const parts = data?.candidates?.[0]?.content?.parts || [];
   return parts
-    .map(part => typeof part.text === 'string' ? part.text : '')
+    .map(function (part) {
+      return typeof part.text === 'string' ? part.text : '';
+    })
     .join('')
     .trim();
 }
@@ -366,12 +232,12 @@ function extractBalancedJSONObject(raw) {
   let inString = false;
   let escaped = false;
 
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i];
+  for (let index = 0; index < raw.length; index++) {
+    const char = raw[index];
 
     if (start === -1) {
-      if (ch === '{') {
-        start = i;
+      if (char === '{') {
+        start = index;
         depth = 1;
       }
       continue;
@@ -380,44 +246,36 @@ function extractBalancedJSONObject(raw) {
     if (inString) {
       if (escaped) {
         escaped = false;
-      } else if (ch === '\\') {
+      } else if (char === '\\') {
         escaped = true;
-      } else if (ch === '"') {
+      } else if (char === '"') {
         inString = false;
       }
       continue;
     }
 
-    if (ch === '"') {
+    if (char === '"') {
       inString = true;
       continue;
     }
 
-    if (ch === '{') depth++;
-    if (ch === '}') depth--;
+    if (char === '{') depth++;
+    if (char === '}') depth--;
 
     if (depth === 0) {
-      return raw.slice(start, i + 1);
+      return raw.slice(start, index + 1);
     }
   }
 
   return null;
 }
 
-function isLikelyTruncatedJSON(raw, finishReason) {
-  if (finishReason === 'MAX_TOKENS') return true;
-  if (!raw) return false;
-
-  const trimmed = raw.trim();
-  return trimmed.startsWith('{') && !trimmed.endsWith('}');
-}
-
-function parseAnimationJSON(data) {
+function parseJSONObject(data) {
   const finishReason = data?.candidates?.[0]?.finishReason || 'unknown';
   const rawText = getCandidateText(data);
 
   if (!rawText) {
-    const err = createServiceError('Gemini returned no content. Finish reason: ' + finishReason, 502);
+    const err = createServiceError('Gemini returned no planning content. Finish reason: ' + finishReason, 502);
     err.retryable = finishReason === 'MAX_TOKENS' || finishReason === 'RECITATION';
     throw err;
   }
@@ -428,175 +286,81 @@ function parseAnimationJSON(data) {
   try {
     return JSON.parse(extracted);
   } catch (_) {
-    const err = createServiceError(
-      'Gemini returned malformed JSON. Finish reason: ' + finishReason + '.',
-      502
-    );
-    err.retryable = isLikelyTruncatedJSON(cleaned, finishReason);
-    err.rawPreview = cleaned.slice(0, 300);
+    const err = createServiceError('Gemini returned malformed plan JSON. Finish reason: ' + finishReason + '.', 502);
+    err.retryable = finishReason === 'MAX_TOKENS';
     throw err;
   }
 }
 
-function detectHexColor(description) {
-  const lower = description.toLowerCase();
-  const colors = [
-    ['red', '#ef4444'],
-    ['blue', '#3b82f6'],
-    ['green', '#22c55e'],
-    ['yellow', '#facc15'],
-    ['orange', '#f97316'],
-    ['purple', '#a855f7'],
-    ['pink', '#ec4899'],
-    ['white', '#f8fafc'],
-    ['black', '#111827'],
-    ['gold', '#f59e0b']
-  ];
-
-  for (const [name, hex] of colors) {
-    if (lower.includes(name)) return hex;
-  }
-
-  return '#3b82f6';
+function sanitizeEnum(value, allowed, fallback) {
+  return allowed.includes(value) ? value : fallback;
 }
 
-function buildSquareFallback(description) {
-  const fill = detectHexColor(description);
-  const lower = description.toLowerCase();
-  const rotation = lower.includes('spin') || lower.includes('rotate');
+function sanitizeSubject(subject, fallback) {
+  const input = subject && typeof subject === 'object' && !Array.isArray(subject) ? subject : {};
+  const base = fallback || {
+    type: 'custom',
+    label: 'Subject',
+    color: '#3b82f6'
+  };
 
   return {
-    version: '1.0',
-    canvas: { width: 800, height: 450, background: '#0f172a' },
-    elements: [
-      { id: 'square-main', type: 'rect', x: 360, y: 185, width: 80, height: 80, fill, opacity: 1, rx: 10 }
-    ],
-    timeline: [
-      rotation
-        ? { id: 'square-spin', target: 'square-main', type: 'rotate', from: { rotation: 0 }, to: { rotation: 360 }, duration: 2.5, delay: 0, ease: 'none', repeat: -1, yoyo: false }
-        : { id: 'square-fade', target: 'square-main', type: 'fade', from: { opacity: 0 }, to: { opacity: 1 }, duration: 1.2, delay: 0, ease: 'power2.out', repeat: 0, yoyo: false }
-    ]
+    type: sanitizeEnum(input.type, PLAN_SUBJECT_TYPES, base.type),
+    label: typeof input.label === 'string' && input.label.trim() ? input.label.trim().slice(0, 40) : base.label,
+    color: typeof input.color === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(input.color)
+      ? input.color.toLowerCase()
+      : base.color
   };
 }
 
-function buildCandlestickFallback() {
-  return {
-    version: '1.0',
-    canvas: { width: 800, height: 450, background: '#0b1220' },
-    elements: [
-      { id: 'candle-up', type: 'rect', x: 220, y: 165, width: 36, height: 90, fill: '#22c55e', opacity: 1, rx: 4 },
-      { id: 'candle-down', type: 'rect', x: 400, y: 145, width: 36, height: 110, fill: '#ef4444', opacity: 1, rx: 4 },
-      { id: 'candle-up-2', type: 'rect', x: 580, y: 180, width: 36, height: 75, fill: '#22c55e', opacity: 1, rx: 4 }
-    ],
-    timeline: [
-      { id: 'candles-rise', target: 'candle-up', type: 'fade', from: { opacity: 0 }, to: { opacity: 1 }, duration: 0.7, delay: 0, ease: 'power2.out', repeat: 0, yoyo: false },
-      { id: 'candles-rise-2', target: 'candle-down', type: 'fade', from: { opacity: 0 }, to: { opacity: 1 }, duration: 0.7, delay: 0.1, ease: 'power2.out', repeat: 0, yoyo: false },
-      { id: 'candles-rise-3', target: 'candle-up-2', type: 'fade', from: { opacity: 0 }, to: { opacity: 1 }, duration: 0.7, delay: 0.2, ease: 'power2.out', repeat: 0, yoyo: false }
-    ]
-  };
-}
-
-function buildOrbitFallback(description) {
-  const fill = detectHexColor(description);
+function sanitizePlan(rawPlan, description) {
+  const fallback = createIntentPlan(description);
+  const input = rawPlan && typeof rawPlan === 'object' && !Array.isArray(rawPlan) ? rawPlan : {};
 
   return {
-    version: '1.0',
-    canvas: { width: 800, height: 450, background: '#08111f' },
-    elements: [
-      { id: 'star-core', type: 'circle', x: 400, y: 225, radius: 36, fill: '#facc15', opacity: 1, blur: 0 },
-      { id: 'planet-orbit', type: 'circle', x: 560, y: 225, radius: 20, fill, opacity: 1 }
-    ],
-    timeline: [
-      { id: 'planet-loop', target: 'planet-orbit', type: 'move', from: { x: 560, y: 225 }, to: { x: 560, y: 225 }, duration: 4, delay: 0, ease: 'none', repeat: -1, yoyo: false }
-    ]
-  };
-}
-
-function buildSimpleFallback(description) {
-  const lower = description.toLowerCase();
-
-  if (lower.includes('candlestick') || lower.includes('candle stick')) {
-    return buildCandlestickFallback();
-  }
-
-  if (lower.includes('orbit') || lower.includes('satellite') || lower.includes('planet')) {
-    return buildOrbitFallback(description);
-  }
-
-  if (lower.includes('square') || lower.includes('rect') || lower.includes('rectangle')) {
-    return buildSquareFallback(description);
-  }
-
-  return null;
-}
-
-function prioritizeElementIds(animationJSON) {
-  const priorityIds = [];
-  const seen = new Set();
-
-  (animationJSON.timeline || []).forEach(anim => {
-    if (anim.target && !seen.has(anim.target)) {
-      seen.add(anim.target);
-      priorityIds.push(anim.target);
+    version: PLAN_VERSION,
+    sceneType: sanitizeEnum(input.sceneType, PLAN_SCENE_TYPES, fallback.sceneType),
+    subject: sanitizeSubject(input.subject, fallback.subject),
+    secondarySubjects: Array.isArray(input.secondarySubjects)
+      ? input.secondarySubjects.slice(0, 2).map(function (subject, index) {
+          return sanitizeSubject(subject, fallback.secondarySubjects[index] || fallback.subject);
+        })
+      : fallback.secondarySubjects,
+    motion: {
+      type: sanitizeEnum(input.motion && input.motion.type, PLAN_MOTION_TYPES, fallback.motion.type),
+      loop: typeof (input.motion && input.motion.loop) === 'boolean' ? input.motion.loop : fallback.motion.loop
+    },
+    style: {
+      complexity: sanitizeEnum(input.style && input.style.complexity, PLAN_COMPLEXITY_LEVELS, fallback.style.complexity),
+      mood: sanitizeEnum(input.style && input.style.mood, PLAN_MOOD_TYPES, fallback.style.mood)
     }
-  });
-
-  (animationJSON.elements || []).forEach(el => {
-    if (el.id && !seen.has(el.id)) {
-      seen.add(el.id);
-      priorityIds.push(el.id);
-    }
-  });
-
-  return priorityIds;
-}
-
-function getPruneLimits(description) {
-  const complexity = estimatePromptComplexity(description);
-
-  if (complexity === 'simple') return { maxElements: 2, maxTimeline: 2 };
-  if (complexity === 'medium') return { maxElements: 4, maxTimeline: 5 };
-  return { maxElements: 6, maxTimeline: 8 };
-}
-
-function pruneAnimationJSON(animationJSON, description) {
-  const limits = getPruneLimits(description);
-  const selectedIds = new Set(prioritizeElementIds(animationJSON).slice(0, limits.maxElements));
-
-  const elements = (animationJSON.elements || []).filter(el => selectedIds.has(el.id));
-  const timeline = (animationJSON.timeline || [])
-    .filter(anim => selectedIds.has(anim.target))
-    .slice(0, limits.maxTimeline);
-
-  const referencedIds = new Set(timeline.map(anim => anim.target));
-  const finalElements = elements.filter(el => referencedIds.has(el.id) || elements.length <= limits.maxElements);
-
-  return Object.assign({}, animationJSON, {
-    elements: finalElements.slice(0, limits.maxElements),
-    timeline
-  });
+  };
 }
 
 async function callGeminiAPI(url, payload, attemptNumber) {
   return scheduleGeminiRequest(async function () {
     const controller = new AbortController();
-    const timeoutId  = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+    const timeoutId = setTimeout(function () {
+      controller.abort();
+    }, GEMINI_TIMEOUT_MS);
 
     try {
       const response = await fetch(url, {
-        method:  'POST',
-        signal:  controller.signal,
+        method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload)
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
         const errText = await response.text();
-        const message = 'Gemini API Error (' + response.status + ') on attempt ' + attemptNumber + '.';
         const statusCode = response.status === 429
           ? 429
           : (isRetryableStatus(response.status) ? 502 : 500);
-        const err = createServiceError(message, statusCode);
+        const err = createServiceError(
+          'Gemini planning request failed with status ' + response.status + ' on attempt ' + attemptNumber + '.',
+          statusCode
+        );
         err.retryable = isRetryableStatus(response.status);
         err.providerStatus = response.status;
         err.providerBody = errText;
@@ -608,7 +372,7 @@ async function callGeminiAPI(url, payload, attemptNumber) {
     } catch (err) {
       if (err.name === 'AbortError') {
         const timeoutErr = createServiceError(
-          'Gemini API timed out after ' + Math.round(GEMINI_TIMEOUT_MS / 1000) + ' seconds.',
+          'Gemini planning request timed out after ' + Math.round(GEMINI_TIMEOUT_MS / 1000) + ' seconds.',
           504
         );
         timeoutErr.retryable = true;
@@ -622,80 +386,60 @@ async function callGeminiAPI(url, payload, attemptNumber) {
   });
 }
 
-async function generateAnimationJSON(description) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY environment variable is missing.');
+function buildFallbackPlan(description) {
+  return createIntentPlan(description);
+}
 
-  const url =
-    'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent?key=' + apiKey;
-  const cacheKey = description.trim();
+async function generateAnimationPlan(description) {
+  const normalizedDescription = String(description || '').trim();
+  const cacheKey = 'plan:' + normalizedDescription.toLowerCase();
   const cachedValue = getCacheEntry(cacheKey);
   if (cachedValue) return cloneJSON(cachedValue);
+
+  const fallbackPlan = buildFallbackPlan(normalizedDescription);
+  const validation = validateAnimationPlan(fallbackPlan);
+  if (!validation.valid) {
+    throw createServiceError('Local fallback plan failed validation: ' + validation.errors.join(' | '), 500);
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    setCacheEntry(cacheKey, fallbackPlan);
+    return cloneJSON(fallbackPlan);
+  }
 
   const inFlight = geminiInFlightRequests.get(cacheKey);
   if (inFlight) return cloneJSON(await inFlight);
 
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent?key=' + apiKey;
   const requestPromise = (async function () {
-    let lastErr = null;
-    const modeOrder = getModeOrder(description);
+    for (let attempt = 1; attempt <= GEMINI_MAX_RETRIES + 1; attempt++) {
+      try {
+        const data = await callGeminiAPI(url, buildPayload(normalizedDescription), attempt);
+        const plan = sanitizePlan(parseJSONObject(data), normalizedDescription);
+        const planValidation = validateAnimationPlan(plan);
 
-    for (const mode of modeOrder) {
-      for (let attempt = 1; attempt <= GEMINI_MAX_RETRIES + 1; attempt++) {
-        try {
-          const data = await callGeminiAPI(url, buildPayload(description, mode), attempt);
-          const parsed = pruneAnimationJSON(parseAnimationJSON(data), description);
-          setCacheEntry(cacheKey, parsed);
-          return parsed;
-        } catch (err) {
-          lastErr = err;
-
-          if (attempt <= GEMINI_MAX_RETRIES && err.retryable) {
-            const retryDelay = err.retryAfterMs != null
-              ? Math.max(err.retryAfterMs, GEMINI_MIN_INTERVAL_MS)
-              : Math.min(8000, 1200 * Math.pow(2, attempt - 1));
-            await sleep(retryDelay);
-            continue;
-          }
-
-          if (mode !== 'micro' && err.retryable) {
-            break;
-          }
-
-          if (err.providerStatus === 429) {
-            const rateLimitErr = createServiceError(
-              'Gemini rate limit reached. Please retry in a few seconds.',
-              429
-            );
-            rateLimitErr.retryAfterMs = err.retryAfterMs;
-            throw rateLimitErr;
-          }
-
-          if (err.providerStatus) {
-            throw createServiceError(
-              'Gemini request failed after ' + attempt + ' attempt(s). Provider status: ' + err.providerStatus + '.',
-              err.statusCode || 502
-            );
-          }
-
-          if (mode === 'micro' && err.rawPreview) {
-            throw createServiceError(
-              err.message + ' Preview: ' + err.rawPreview,
-              err.statusCode || 502
-            );
-          }
-
-          if (!err.retryable) throw err;
+        if (!planValidation.valid) {
+          throw createServiceError('Gemini returned an invalid animation plan.', 502);
         }
+
+        setCacheEntry(cacheKey, plan);
+        return plan;
+      } catch (err) {
+        if (attempt <= GEMINI_MAX_RETRIES && err.retryable) {
+          const retryDelay = err.retryAfterMs != null
+            ? Math.max(err.retryAfterMs, GEMINI_MIN_INTERVAL_MS)
+            : Math.min(8000, 1200 * Math.pow(2, attempt - 1));
+          await sleep(retryDelay);
+          continue;
+        }
+
+        break;
       }
     }
 
-    const fallback = buildSimpleFallback(description);
-    if (fallback) {
-      setCacheEntry(cacheKey, fallback);
-      return fallback;
-    }
-
-    throw lastErr || createServiceError('Gemini request failed before producing JSON.', 502);
+    setCacheEntry(cacheKey, fallbackPlan);
+    return fallbackPlan;
   })();
 
   geminiInFlightRequests.set(cacheKey, requestPromise);
@@ -707,4 +451,7 @@ async function generateAnimationJSON(description) {
   }
 }
 
-module.exports = { generateAnimationJSON };
+module.exports = {
+  buildFallbackPlan,
+  generateAnimationPlan
+};

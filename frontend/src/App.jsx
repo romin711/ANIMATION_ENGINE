@@ -20,7 +20,13 @@ function App() {
     setAnimationData(null) // Reset canvas for loading state
     
     try {
-      const data = await generateAnimation(fullDescription)
+      const data = await generateAnimation({
+        description: fullDescription,
+        duration: promptData.duration,
+        speed: promptData.speed,
+        shape: promptData.shape,
+        color: promptData.color
+      })
       setAnimationData(data.animation)
       setStatus('success')
       // Save generation to history

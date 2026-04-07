@@ -55,14 +55,6 @@ class Vector2D {
   // Perpendicular vector (90° counter-clockwise)
   perpendicular() { return new Vector2D(-this.y, this.x); }
 
-  // Linear interpolation toward v
-  lerp(v, t) {
-    return new Vector2D(
-      this.x + (v.x - this.x) * t,
-      this.y + (v.y - this.y) * t
-    );
-  }
-
   // Reflect this vector across a normal
   reflect(normal) {
     const n = normal.normalize();

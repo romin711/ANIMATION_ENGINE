@@ -71,7 +71,8 @@ AI 2D Animation Generator helps users create simple motion graphics without manu
 ### Prompt and Generation
 > Natural language prompt input for animation intent.  
 > Prompt enrichment using visual controls (shape, color, speed, duration).  
-> Backend integration with Google Gemini model for JSON generation.
+> Hybrid generation route: fast template/classifier path for common prompts, Gemini plan generation for open-ended prompts.  
+> Deterministic builder layer converts compact plans into full animation JSON.
 
 ### Validation and Reliability
 > Server-side input validation for request payloads.  
@@ -125,13 +126,17 @@ The project uses a two-tier architecture:
 #### Backend
 - `server.js`: API bootstrap, middleware setup, health endpoint, global error handler
 - `routes/animationRoutes.js`: route registration for animation generation
-- `controllers/animationController.js`: request validation, service orchestration, response handling
-- `services/geminiService.js`: prompt construction, Gemini API call, JSON parsing
-- `validators/animationValidator.js`: contract validation for animation JSON
+- `controllers/animationController.js`: request validation, prompt routing, orchestration, response handling
+- `processors/PromptClassifier.js`: prompt normalization and route selection (template vs planner)
+- `services/geminiService.js`: compact animation-plan generation via Gemini when planner route is selected
+- `builders/buildAnimationFromPlan.js`: deterministic translation from plan to animation JSON
+- `builders/templates/*.js`: scene-specific template builders
+- `schema/animationPlanSchema.js`: plan contract constants and schema helpers
+- `validators/animationPlanValidator.js`: AI plan validation before build
+- `validators/animationValidator.js`: final contract validation for animation JSON
 - `processors/AnimationEnricher.js`: post-validation motion enrichment pipeline
 - `physics/*.js`: reusable physics solvers and motion generators
-- `utils/*.js`: shared math/color helpers for enrichment and processing
-- `schema/animationSchema.js`: canonical schema reference
+- `utils/MathUtils.js`: shared math helpers for enrichment and processing
 
 #### Frontend
 - `src/App.jsx`: application state and orchestration
@@ -148,11 +153,12 @@ The project uses a two-tier architecture:
 2. Frontend merges user input into a single enriched description string.
 3. Frontend sends POST request to backend endpoint.
 4. Backend validates request body.
-5. Backend sends prompt to Gemini API and receives generated JSON text.
-6. Backend parses and validates JSON against animation contract.
-7. Backend returns validated animation payload.
-8. Frontend renders SVG elements and plays timeline via GSAP.
-9. User can scrub, replay, and export to WebM.
+5. Backend classifies the prompt into template route or planner route.
+6. Planner route calls Gemini for a compact plan; template route skips Gemini.
+7. Backend builds full animation JSON deterministically from the selected plan/template.
+8. Backend validates animation JSON, enriches physics (non-fatal), and returns payload.
+9. Frontend renders SVG elements and plays timeline via GSAP.
+10. User can scrub, replay, and export to WebM.
 
 ---
 
@@ -167,6 +173,15 @@ ANIMATION_ENGINE/
 │   ├── .env.example
 │   ├── package.json
 │   ├── server.js
+│   ├── builders/
+│   │   ├── buildAnimationFromPlan.js
+│   │   ├── builderUtils.js
+│   │   └── templates/
+│   │       ├── abstractSceneBuilder.js
+│   │       ├── basicShapeBuilder.js
+│   │       ├── candlestickBuilder.js
+│   │       ├── orbitBuilder.js
+│   │       └── textBuilder.js
 │   ├── controllers/
 │   │   └── animationController.js
 │   ├── physics/
@@ -179,17 +194,18 @@ ANIMATION_ENGINE/
 │   ├── processors/
 │   │   ├── AnimationEnricher.js
 │   │   ├── KeyframeOptimizer.js
+│   │   ├── PromptClassifier.js
 │   │   └── SceneAnalyzer.js
 │   ├── routes/
 │   │   └── animationRoutes.js
 │   ├── schema/
-│   │   └── animationSchema.js
+│   │   └── animationPlanSchema.js
 │   ├── services/
 │   │   └── geminiService.js
 │   ├── utils/
-│   │   ├── ColorUtils.js
 │   │   └── MathUtils.js
 │   └── validators/
+│       ├── animationPlanValidator.js
 │       └── animationValidator.js
 └── frontend/
     ├── index.html
@@ -238,6 +254,14 @@ npm install
 ```env
 GEMINI_API_KEY=your_gemini_api_key
 PORT=5000
+# Optional tuning
+# NODE_ENV=development
+# GEMINI_MODEL=gemini-2.5-flash
+# GEMINI_TIMEOUT_MS=60000
+# GEMINI_MAX_RETRIES=2
+# GEMINI_PLAN_MAX_OUTPUT_TOKENS=256
+# GEMINI_PLAN_TEMPERATURE=0.1
+# GEMINI_TOP_P=0.7
 ```
 
 4. Install frontend dependencies
@@ -369,13 +393,15 @@ Success response:
 Request body:
 ```json
 {
-  "description": "A blue circle moving from left to right"
+  "description": "A blue circle moving from left to right",
+  "duration": 6
 }
 ```
 
 Request constraints:
 - `description` must be a non-empty string
 - max `description` length is 1000 characters
+- optional `duration` must be a finite number between 1 and 30 seconds
 - JSON body size limit is 50kb
 
 Success response (200):
@@ -420,7 +446,7 @@ Validation error (400):
 AI schema validation error (422):
 ```json
 {
-  "error": "AI returned invalid animation JSON",
+  "error": "Generated animation JSON is invalid",
   "details": [
     "timeline[0]: \"target\" must reference a valid element id."
   ]
@@ -430,7 +456,7 @@ AI schema validation error (422):
 Server error (500):
 ```json
 {
-  "error": "Internal server error",
+  "error": "Upstream service error",
   "details": "Error message"
 }
 ```
@@ -438,7 +464,7 @@ Server error (500):
 Timeout example (500):
 ```json
 {
-  "error": "Internal server error",
+  "error": "Upstream service error",
   "details": "Gemini API timed out after 25 seconds."
 }
 ```
