@@ -20,7 +20,7 @@ Full-stack application that converts natural language animation prompts into str
 
 | What | Why | How |
 |---|---|---|
-| Generate 2D animations from plain-language prompts | Reduce the friction of building motion graphics manually | React frontend collects prompt + controls, Express backend calls Gemini, validated JSON is rendered and animated with SVG + GSAP |
+| Generate 2D animations from plain-language prompts | Reduce the friction of building motion graphics manually | React frontend collects prompt + controls, Express backend classifies the prompt, uses Gemini only for complex routes, and builds validated animation JSON deterministically |
 
 ---
 
@@ -71,11 +71,12 @@ AI 2D Animation Generator helps users create simple motion graphics without manu
 ### Prompt and Generation
 > Natural language prompt input for animation intent.  
 > Prompt enrichment using visual controls (shape, color, speed, duration).  
-> Hybrid generation route: fast template/classifier path for common prompts, Gemini plan generation for open-ended prompts.  
+> Hybrid generation route: fast classifier + builder path for simple prompts, Gemini planning only for complex prompts.  
 > Deterministic builder layer converts compact plans into full animation JSON.
 
 ### Validation and Reliability
 > Server-side input validation for request payloads.  
+> Lightweight in-memory metrics for request counts, Gemini usage, fallback hits, builder usage, and response timing.  
 > Schema-based validation of AI output before returning data to client.  
 > Structured error responses for invalid AI output or malformed requests.
 
@@ -126,17 +127,19 @@ The project uses a two-tier architecture:
 #### Backend
 - `server.js`: API bootstrap, middleware setup, health endpoint, global error handler
 - `routes/animationRoutes.js`: route registration for animation generation
-- `controllers/animationController.js`: request validation, prompt routing, orchestration, response handling
-- `processors/PromptClassifier.js`: prompt normalization and route selection (template vs planner)
-- `services/geminiService.js`: compact animation-plan generation via Gemini when planner route is selected
-- `builders/buildAnimationFromPlan.js`: deterministic translation from plan to animation JSON
-- `builders/templates/*.js`: scene-specific template builders
+- `controllers/animationController.js`: request validation, classify-first routing, simple vs complex execution, metrics, response handling
+- `processors/PromptClassifier.js`: prompt normalization and deterministic `{ type, complexity }` detection
+- `services/geminiService.js`: compact animation-plan generation via Gemini for complex prompts only
+- `builders/buildAnimationFromPlan.js`: strict routing from plan type to builder implementation
+- `builders/templates/*.js`: scene-specific template builders for shapes, orbit, candlestick, text, bounce, float, particles, flow, skyline, and multi-object scenes
 - `schema/animationPlanSchema.js`: plan contract constants and schema helpers
 - `validators/animationPlanValidator.js`: AI plan validation before build
 - `validators/animationValidator.js`: final contract validation for animation JSON
 - `processors/AnimationEnricher.js`: post-validation motion enrichment pipeline
 - `physics/*.js`: reusable physics solvers and motion generators
 - `utils/MathUtils.js`: shared math helpers for enrichment and processing
+- `utils/metrics.js`: in-memory counters for request timing, Gemini calls, fallback hits, and builder usage
+- `temp.js`: local routing audit harness for classifier and builder verification
 
 #### Frontend
 - `src/App.jsx`: application state and orchestration
@@ -153,10 +156,10 @@ The project uses a two-tier architecture:
 2. Frontend merges user input into a single enriched description string.
 3. Frontend sends POST request to backend endpoint.
 4. Backend validates request body.
-5. Backend classifies the prompt into template route or planner route.
-6. Planner route calls Gemini for a compact plan; template route skips Gemini.
-7. Backend builds full animation JSON deterministically from the selected plan/template.
-8. Backend validates animation JSON, enriches physics (non-fatal), and returns payload.
+5. Backend classifies the prompt into `type` plus `complexity`.
+6. Simple prompts skip Gemini and create a local plan directly.
+7. Complex prompts call Gemini for a compact plan only.
+8. Backend validates the plan, builds full animation JSON deterministically, validates the output, and enriches physics non-fatal.
 9. Frontend renders SVG elements and plays timeline via GSAP.
 10. User can scrub, replay, and export to WebM.
 
@@ -178,9 +181,20 @@ ANIMATION_ENGINE/
 │   │   ├── builderUtils.js
 │   │   └── templates/
 │   │       ├── abstractSceneBuilder.js
+│   │       ├── advancedChartSceneBuilder.js
 │   │       ├── basicShapeBuilder.js
+│   │       ├── bounceSceneBuilder.js
 │   │       ├── candlestickBuilder.js
+│   │       ├── chartAdvancedBuilder.js
+│   │       ├── flowBuilder.js
+│   │       ├── floatSceneBuilder.js
+│   │       ├── multiBuilder.js
+│   │       ├── multiSubjectSceneBuilder.js
 │   │       ├── orbitBuilder.js
+│   │       ├── particleExplosionBuilder.js
+│   │       ├── particleFlowFieldBuilder.js
+│   │       ├── skylineBuilder.js
+│   │       ├── skylineSceneBuilder.js
 │   │       └── textBuilder.js
 │   ├── controllers/
 │   │   └── animationController.js
@@ -203,7 +217,9 @@ ANIMATION_ENGINE/
 │   ├── services/
 │   │   └── geminiService.js
 │   ├── utils/
-│   │   └── MathUtils.js
+│   │   ├── MathUtils.js
+│   │   └── metrics.js
+│   ├── temp.js
 │   └── validators/
 │       ├── animationPlanValidator.js
 │       └── animationValidator.js
@@ -285,6 +301,22 @@ npm run dev
 7. Open application
 - Frontend: http://localhost:5173
 - Backend health check: http://localhost:5000/health
+
+### Routing Audit
+
+Run the local routing audit harness whenever you want to verify classifier and builder wiring:
+
+```bash
+cd backend
+node temp.js
+```
+
+It prints:
+- detected prompt type
+- selected builder
+- whether Gemini was used
+- whether fallback was used
+- builder usage summary
 
 ---
 
@@ -403,6 +435,8 @@ Request constraints:
 - max `description` length is 1000 characters
 - optional `duration` must be a finite number between 1 and 30 seconds
 - JSON body size limit is 50kb
+- simple prompts may be handled without Gemini
+- complex prompts may use Gemini planning, but the builder still produces the final JSON
 
 Success response (200):
 ```json
