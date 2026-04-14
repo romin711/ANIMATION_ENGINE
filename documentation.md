@@ -1055,6 +1055,6 @@ That architecture is what makes this project **technically interesting and produ
 [![Author](https://img.shields.io/badge/Author-@romin711-6366f1?style=for-the-badge&logo=github)](https://github.com/romin711)
 [![Built with](https://img.shields.io/badge/Built_with-React_·_Express_·_GSAP_·_Gemini-f59e0b?style=for-the-badge)](https://github.com/romin711/ANIMATION_ENGINE)
 
-*Made with ❤️ by [Romin Kevadiya](https://github.com/romin711)*
+*Made by [Romin Kevadiya](https://github.com/romin711)*
 
 </div>
