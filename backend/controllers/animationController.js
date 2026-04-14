@@ -1,10 +1,12 @@
 'use strict';
 
 const geminiService = require('../services/geminiService');
-const { buildAnimationFromPlan, selectBuilderKey } = require('../builders/buildAnimationFromPlan');
+const { buildAnimationFromPlan } = require('../builders/buildAnimationFromPlan');
 const { enrichAnimation } = require('../processors/AnimationEnricher');
-const { classifyPrompt, normalizePrompt } = require('../processors/PromptClassifier');
+const { classifyPrompt, createIntentPlan, normalizePrompt } = require('../processors/PromptClassifier');
+const { validateAnimationPlan } = require('../validators/animationPlanValidator');
 const { validateAnimationJSON } = require('../validators/animationValidator');
+const { metrics, startTimer, endTimer, logFallback, logFailure } = require('../utils/metrics');
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const MAX_DESCRIPTION_LEN = 1000;
@@ -57,7 +59,54 @@ function applyRequestedDuration(animationJSON, requestedDuration) {
   });
 }
 
+function createDirectPlan(description, type) {
+  return Object.assign({}, createIntentPlan(description, {
+    type,
+    prompt: description
+  }), {
+    type,
+    prompt: description
+  });
+}
+
+function attachPlanMetadata(plan, description, type) {
+  return Object.assign({}, plan, {
+    type: plan?.type || type || 'unknown',
+    prompt: description
+  });
+}
+
+function logMetricsSnapshot() {
+  console.log('METRICS_SNAPSHOT:', JSON.stringify(metrics));
+}
+
+async function fetchComplexPlan(description, classification) {
+  const plan = attachPlanMetadata(
+    await geminiService.generateAnimationPlan(description),
+    description,
+    classification.type
+  );
+
+  return {
+    plan,
+    geminiBacked: Boolean(plan?._geminiAttempted && !plan?._fallbackUsed),
+    fallbackUsed: Boolean(plan?._fallbackUsed)
+  };
+}
+
+function activateUnknownFallback(description, state) {
+  if (!state.fallbackUsed) {
+    console.warn('FALLBACK_USED', description);
+    logFallback();
+    state.fallbackUsed = true;
+  }
+
+  return createDirectPlan(description, 'unknown');
+}
+
 async function generateAnimation(req, res, next) {
+  const startTime = startTimer();
+
   try {
     const { description, duration } = req.body;
 
@@ -101,37 +150,97 @@ async function generateAnimation(req, res, next) {
       console.log('[Controller] Prompt:', trimmed.slice(0, 80) + (trimmed.length > 80 ? '…' : ''));
     }
 
-    const route = classifyPrompt(trimmed);
+    const classification = classifyPrompt(trimmed);
+    const isSimpleRoute = classification.isSimple === true;
 
-    let plan = route.plan;
-    let builderKey = route.template;
+    let plan;
+    const runtimeState = { fallbackUsed: false };
+    let geminiBacked = false;
 
-    if (route.kind !== 'template') {
-      plan = await geminiService.generateAnimationPlan(trimmed);
-      builderKey = selectBuilderKey(plan);
+    if (isSimpleRoute) {
+      console.log('SIMPLE_ROUTE_USED');
+      plan = createDirectPlan(trimmed, classification.type);
+    } else {
+      const complexPlan = await fetchComplexPlan(trimmed, classification);
+      plan = complexPlan.plan;
+      geminiBacked = complexPlan.geminiBacked;
+      if (complexPlan.fallbackUsed) {
+        runtimeState.fallbackUsed = true;
+        logFallback();
+      }
     }
 
-    if (NODE_ENV === 'development') {
-      console.log('[Controller] Route:', route.kind, '| Builder:', builderKey);
+    let planValidation = validateAnimationPlan(plan);
+    if (!planValidation.valid) {
+      console.error('[Controller] Plan validation failed:', planValidation.errors);
+      logFailure('validator');
+
+      if (geminiBacked) {
+        const retryResult = await fetchComplexPlan(trimmed, classification);
+        const retryPlan = retryResult.plan;
+
+        if (retryResult.fallbackUsed && !runtimeState.fallbackUsed) {
+          runtimeState.fallbackUsed = true;
+          logFallback();
+        }
+
+        const retryValidation = validateAnimationPlan(retryPlan);
+        if (retryValidation.valid) {
+          plan = retryPlan;
+          geminiBacked = retryResult.geminiBacked;
+          planValidation = retryValidation;
+        } else {
+          console.error('[Controller] Plan validation retry failed:', retryValidation.errors);
+          logFailure('validator');
+          plan = activateUnknownFallback(trimmed, runtimeState);
+          geminiBacked = false;
+          planValidation = validateAnimationPlan(plan);
+        }
+      } else {
+        plan = activateUnknownFallback(trimmed, runtimeState);
+        planValidation = validateAnimationPlan(plan);
+      }
     }
 
-    // ── Step 1: Deterministic build ─────────────────────────────────────────
-    const rawJSON = applyRequestedDuration(
-      buildAnimationFromPlan(plan, trimmed, { template: builderKey }),
-      requestedDuration
-    );
-
-    // ── Step 2: Final JSON validation ───────────────────────────────────────
-    const validation = validateAnimationJSON(rawJSON);
-    if (!validation.valid) {
-      if (NODE_ENV === 'development') console.error('[Controller] Validation failed:', validation.errors);
+    if (!planValidation.valid) {
+      console.error('[Controller] Final plan validation failed:', planValidation.errors);
+      logFailure('validator');
       return res.status(422).json({
-        error:   'Generated animation JSON is invalid',
-        details: validation.errors
+        error: 'Generated animation plan is invalid',
+        details: planValidation.errors
       });
     }
 
-    // ── Step 3: Physics enrichment ──────────────────────────────────────────
+    const buildOutput = function (activePlan) {
+      return applyRequestedDuration(
+        buildAnimationFromPlan(activePlan, trimmed),
+        requestedDuration
+      );
+    };
+
+    let rawJSON = buildOutput(plan);
+    let outputValidation = validateAnimationJSON(rawJSON);
+
+    if (!outputValidation.valid) {
+      console.error('[Controller] Output validation failed:', outputValidation.errors);
+      logFailure('validator');
+
+      if (!runtimeState.fallbackUsed) {
+        plan = activateUnknownFallback(trimmed, runtimeState);
+        rawJSON = buildOutput(plan);
+        outputValidation = validateAnimationJSON(rawJSON);
+      }
+    }
+
+    if (!outputValidation.valid) {
+      console.error('[Controller] Final output validation failed:', outputValidation.errors);
+      logFailure('validator');
+      return res.status(422).json({
+        error: 'Generated animation JSON is invalid',
+        details: outputValidation.errors
+      });
+    }
+
     let finalJSON = rawJSON;
     try {
       finalJSON = enrichAnimation(rawJSON);
@@ -140,7 +249,7 @@ async function generateAnimation(req, res, next) {
         if (enriched > 0) console.log('[Controller] Physics enriched ' + enriched + ' animation(s).');
       }
     } catch (enrichErr) {
-      // Enrichment failure is non-fatal — serve the raw validated JSON
+      logFailure('enrichment');
       if (NODE_ENV === 'development') console.error('[Controller] Enrichment error (non-fatal):', enrichErr.message);
     }
 
@@ -148,6 +257,9 @@ async function generateAnimation(req, res, next) {
 
   } catch (err) {
     next(err);
+  } finally {
+    endTimer(startTime);
+    logMetricsSnapshot();
   }
 }
 

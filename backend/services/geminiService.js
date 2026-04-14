@@ -10,6 +10,7 @@ const {
 } = require('../schema/animationPlanSchema');
 const { validateAnimationPlan } = require('../validators/animationPlanValidator');
 const { createIntentPlan } = require('../processors/PromptClassifier');
+const { logGeminiCall, logFailure, logTimeout } = require('../utils/metrics');
 
 const SYSTEM_PROMPT = `
 You are an animation intent planner for a deterministic 2D animation builder.
@@ -277,6 +278,7 @@ function parseJSONObject(data) {
   if (!rawText) {
     const err = createServiceError('Gemini returned no planning content. Finish reason: ' + finishReason, 502);
     err.retryable = finishReason === 'MAX_TOKENS' || finishReason === 'RECITATION';
+    err.fallbackReason = 'jsonParse';
     throw err;
   }
 
@@ -288,6 +290,7 @@ function parseJSONObject(data) {
   } catch (_) {
     const err = createServiceError('Gemini returned malformed plan JSON. Finish reason: ' + finishReason + '.', 502);
     err.retryable = finishReason === 'MAX_TOKENS';
+    err.fallbackReason = 'jsonParse';
     throw err;
   }
 }
@@ -345,6 +348,7 @@ async function callGeminiAPI(url, payload, attemptNumber) {
     }, GEMINI_TIMEOUT_MS);
 
     try {
+      logGeminiCall();
       const response = await fetch(url, {
         method: 'POST',
         signal: controller.signal,
@@ -371,11 +375,13 @@ async function callGeminiAPI(url, payload, attemptNumber) {
       return response.json();
     } catch (err) {
       if (err.name === 'AbortError') {
+        logTimeout();
         const timeoutErr = createServiceError(
           'Gemini planning request timed out after ' + Math.round(GEMINI_TIMEOUT_MS / 1000) + ' seconds.',
           504
         );
         timeoutErr.retryable = true;
+        timeoutErr.fallbackReason = 'timeout';
         throw timeoutErr;
       }
 
@@ -404,8 +410,13 @@ async function generateAnimationPlan(description) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    setCacheEntry(cacheKey, fallbackPlan);
-    return cloneJSON(fallbackPlan);
+    const fallbackWithMeta = Object.assign({}, fallbackPlan, {
+      _geminiAttempted: false,
+      _fallbackUsed: true,
+      _fallbackReason: 'no_api_key'
+    });
+    setCacheEntry(cacheKey, fallbackWithMeta);
+    return cloneJSON(fallbackWithMeta);
   }
 
   const inFlight = geminiInFlightRequests.get(cacheKey);
@@ -413,10 +424,15 @@ async function generateAnimationPlan(description) {
 
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent?key=' + apiKey;
   const requestPromise = (async function () {
+    let lastError = null;
+
     for (let attempt = 1; attempt <= GEMINI_MAX_RETRIES + 1; attempt++) {
       try {
         const data = await callGeminiAPI(url, buildPayload(normalizedDescription), attempt);
-        const plan = sanitizePlan(parseJSONObject(data), normalizedDescription);
+        const plan = Object.assign(
+          sanitizePlan(parseJSONObject(data), normalizedDescription),
+          { _geminiAttempted: true, _fallbackUsed: false }
+        );
         const planValidation = validateAnimationPlan(plan);
 
         if (!planValidation.valid) {
@@ -426,6 +442,7 @@ async function generateAnimationPlan(description) {
         setCacheEntry(cacheKey, plan);
         return plan;
       } catch (err) {
+        lastError = err;
         if (attempt <= GEMINI_MAX_RETRIES && err.retryable) {
           const retryDelay = err.retryAfterMs != null
             ? Math.max(err.retryAfterMs, GEMINI_MIN_INTERVAL_MS)
@@ -438,8 +455,17 @@ async function generateAnimationPlan(description) {
       }
     }
 
-    setCacheEntry(cacheKey, fallbackPlan);
-    return fallbackPlan;
+    const fallbackReason = lastError?.fallbackReason || (lastError?.message && lastError.message.includes('malformed plan JSON') ? 'jsonParse' : 'gemini_failure');
+    if (fallbackReason === 'jsonParse') {
+      logFailure('jsonParse');
+    }
+    const fallbackWithMeta = Object.assign({}, fallbackPlan, {
+      _geminiAttempted: true,
+      _fallbackUsed: true,
+      _fallbackReason: fallbackReason
+    });
+    setCacheEntry(cacheKey, fallbackWithMeta);
+    return fallbackWithMeta;
   })();
 
   geminiInFlightRequests.set(cacheKey, requestPromise);

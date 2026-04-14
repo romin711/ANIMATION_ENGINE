@@ -88,7 +88,9 @@ function buildTimelineForMotion(motionType, targetId, element, loop) {
   }];
 }
 
-function buildBasicShape(plan, prompt) {
+function buildBasicShape(plan, physicsModules, utils) {
+  console.log('BUILDER_USED:', 'basicShapeBuilder');
+  const prompt = plan?.prompt || '';
   const elementType = resolveElementType(plan, prompt);
   const palettes = pickVariant(prompt, [
     { background: '#0f172a', accent: '#e2e8f0' },
@@ -99,8 +101,7 @@ function buildBasicShape(plan, prompt) {
   const motionType = plan?.motion?.type || 'float';
   const loop = plan?.motion?.loop !== false;
   const subjectIdCore = slugify(plan?.subject?.label || plan?.subject?.type || 'shape', 'shape');
-  const motionId = motionType === 'bounce' ? 'bounce' : motionType === 'float' ? 'float' : 'main';
-  const targetId = subjectIdCore + '-' + motionId;
+  const targetId = subjectIdCore + '-core';
 
   let mainElement;
 

@@ -1,5 +1,7 @@
 'use strict';
 
+const { summarizePromptComposition } = require('./SceneAnalyzer');
+
 const COLOR_MAP = [
   ['crimson', '#dc2626'],
   ['scarlet', '#ef4444'],
@@ -246,6 +248,125 @@ function detectMotionType(prompt) {
   return 'float';
 }
 
+function isTextPrimaryPrompt(lower, hints) {
+  if (!hints.hasTextOverlay) return false;
+  if (hints.hasSkyline) return false;
+
+  if (/\b(city|skyline|building|planet|moon|sun|star|square|circle|ball|bubble|candlestick|chart)\b/.test(lower) && hints.subjectCount > 1) {
+    return false;
+  }
+
+  return /\b(show|display|render|write|headline|caption|title|text|word)\b/.test(lower) || hints.subjectCount <= 1;
+}
+
+function isParticleCentricPrompt(lower, hints) {
+  if (!hints.hasParticles) return false;
+  if (hints.hasSkyline) return false;
+
+  if (/\b(explosion|explode|burst|confetti|shower|storm)\b/.test(lower)) {
+    return true;
+  }
+
+  if (hints.subjectCount > 1 || hints.hasCompositeLanguage || hints.hasTextOverlay) {
+    return false;
+  }
+
+  return /\b(particle|particles|dust|spark|sparks)\b/.test(lower);
+}
+
+function hasAbstractLanguage(lower) {
+  return /\b(abstract|cinematic|futuristic|dramatic|magical|ethereal|surreal|detailed|complex|rich|neon)\b/.test(lower);
+}
+
+function detectPlanType(prompt) {
+  const normalized = normalizePrompt(prompt);
+  const lower = normalized.toLowerCase();
+  const mentions = extractSubjectMentions(normalized);
+  const quotedText = extractQuotedText(normalized);
+  const composition = summarizePromptComposition(normalized);
+  const motionType = detectMotionType(normalized);
+  const subjectCount = Math.max(mentions.length, composition.subjectCount);
+  const hints = {
+    subjectCount,
+    motionType,
+    hasTextOverlay: composition.hasTextOverlay || Boolean(quotedText),
+    hasParticles: composition.hasParticles || mentions.some(function (mention) {
+      return mention.label === 'Particles';
+    }),
+    hasSkyline: composition.hasSkyline,
+    hasCompositeLanguage: composition.hasCompositeLanguage ||
+      /\b(multiple|two objects?|three objects?|several objects?|both)\b/.test(lower) ||
+      lower.includes(' and ') ||
+      lower.includes(' with ') ||
+      lower.includes(' plus ')
+  };
+  let type = 'unknown';
+
+  if (/\b(candlestick|candle stick|candle bar)\b/.test(lower)) {
+    type = 'candlestick';
+  } else if (/\b(stock chart|advanced chart|chart|graph|dashboard|data)\b/.test(lower)) {
+    type = 'chart_advanced';
+  } else if (motionType === 'orbit') {
+    type = 'orbit';
+  } else if (isTextPrimaryPrompt(lower, hints)) {
+    type = 'text';
+  } else if (hints.hasSkyline) {
+    type = 'skyline';
+  } else if (hints.subjectCount > 1 || hints.hasCompositeLanguage) {
+    type = 'multi';
+  } else if (isParticleCentricPrompt(lower, hints)) {
+    type = 'particles';
+  } else if (/\b(flow|flowing|stream|streaming|current|ripple|ribbon)\b/.test(lower)) {
+    type = 'flow';
+  } else if (/\b(bounce|bouncing|jump|jumping|fall|falling|drop|dropping)\b/.test(lower) || motionType === 'bounce') {
+    type = 'bounce';
+  } else if (/\b(float|floating|hover|hovering|drift|drifting)\b/.test(lower)) {
+    type = 'float';
+  } else if (hints.subjectCount === 1) {
+    type = 'basic_shape';
+  }
+
+  const isSimpleOrbit = type === 'orbit' &&
+    !hints.hasCompositeLanguage &&
+    !hints.hasParticles &&
+    !hints.hasSkyline &&
+    !hasAbstractLanguage(lower);
+
+  const isSimpleSingleSubject = hints.subjectCount === 1 &&
+    !hints.hasCompositeLanguage &&
+    !hints.hasParticles &&
+    !hints.hasSkyline &&
+    !hasAbstractLanguage(lower) &&
+    ['basic_shape', 'text', 'bounce', 'float'].includes(type);
+
+  const isSimple = Boolean(isSimpleOrbit || isSimpleSingleSubject);
+
+  return {
+    type,
+    complexity: isSimple ? 'simple' : 'complex',
+    isSimple,
+    subjectCount: hints.subjectCount,
+    motionType: hints.motionType,
+    hasTextOverlay: hints.hasTextOverlay,
+    hasParticles: hints.hasParticles,
+    hasSkyline: hints.hasSkyline
+  };
+}
+
+function detectPlanComplexity(prompt, mentions) {
+  const lower = normalizePrompt(prompt).toLowerCase();
+  const wordCount = lower.split(' ').filter(Boolean).length;
+  let score = 0;
+
+  if (mentions.length > 1) score += 2;
+  if (wordCount > 8) score += 1;
+  if (lower.includes('advanced') || lower.includes('complex') || lower.includes('detailed')) score += 2;
+  if (lower.includes('abstract') || lower.includes('custom')) score += 1;
+  if (lower.includes('with ') && mentions.length > 1) score += 1;
+
+  return score >= 2 ? 'complex' : 'simple';
+}
+
 function detectComplexity(prompt) {
   const normalized = normalizePrompt(prompt);
   const lower = normalized.toLowerCase();
@@ -397,52 +518,17 @@ function createIntentPlan(prompt, overrides) {
   return Object.assign({}, basePlan, overrides || {});
 }
 
-function isCandlestickPrompt(lower) {
-  return lower.includes('candlestick') || lower.includes('candle stick') || lower.includes('candle bar');
-}
-
-function isOrbitPrompt(plan) {
-  return plan.sceneType === 'orbit' && plan.subject.type === 'planet';
-}
-
-function isTextPrompt(plan, normalized) {
-  return plan.sceneType === 'text'
-    || Boolean(extractQuotedText(normalized))
-    || plan.subject.type === 'text';
-}
-
-function isSimpleBasicShapePrompt(plan, lower) {
-  if (plan.sceneType !== 'single-object') return false;
-  if (!['square', 'circle'].includes(plan.subject.type)) return false;
-  if (plan.style.complexity !== 'basic') return false;
-  if (plan.secondarySubjects.length > 0) return false;
-  if (lower.includes(' with ') || lower.includes(' and ') || lower.includes(' plus ')) return false;
-  if (lower.includes('particle') || lower.includes('background') || lower.includes('trail')) return false;
-  return true;
-}
-
 function classifyPrompt(prompt) {
-  const normalized = normalizePrompt(prompt);
-  const lower = normalized.toLowerCase();
-  const plan = createIntentPlan(normalized);
-
-  if (isCandlestickPrompt(lower)) {
-    return { kind: 'template', template: 'candlestick', plan };
-  }
-
-  if (isOrbitPrompt(plan)) {
-    return { kind: 'template', template: 'orbit', plan };
-  }
-
-  if (isTextPrompt(plan, normalized) && plan.secondarySubjects.length === 0) {
-    return { kind: 'template', template: 'text', plan };
-  }
-
-  if (isSimpleBasicShapePrompt(plan, lower)) {
-    return { kind: 'template', template: 'basic-shape', plan };
-  }
-
-  return { kind: 'planner', plan };
+  const result = detectPlanType(prompt);
+  console.log('CLASSIFIED_TYPE:', result.type, JSON.stringify({
+    subjectCount: result.subjectCount,
+    motionType: result.motionType,
+    hasTextOverlay: result.hasTextOverlay,
+    hasParticles: result.hasParticles,
+    hasSkyline: result.hasSkyline,
+    isSimple: result.isSimple
+  }));
+  return result;
 }
 
 module.exports = {
@@ -450,6 +536,8 @@ module.exports = {
   createIntentPlan,
   detectHexColor,
   detectMotionType,
+  detectPlanComplexity,
+  detectPlanType,
   detectSubjectType,
   extractQuotedText,
   extractSubjectMentions,

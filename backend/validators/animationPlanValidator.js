@@ -46,7 +46,8 @@ function validateAnimationPlan(plan) {
   const errors = [];
 
   if (!isObject(plan)) {
-    return { valid: false, errors: ['Animation plan must be a JSON object.'] };
+    errors.push('Animation plan must be a JSON object.');
+    return { valid: false, errors };
   }
 
   if (plan.version !== PLAN_VERSION) {

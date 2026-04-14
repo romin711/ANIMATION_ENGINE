@@ -3,26 +3,46 @@
 const { detectHexColor } = require('../../processors/PromptClassifier');
 const { createScene, pickVariant } = require('../builderUtils');
 
-function buildOrbit(plan, prompt) {
+function roundTo(value, decimals) {
+  const factor = Math.pow(10, decimals);
+  return Math.round(value * factor) / factor;
+}
+
+function buildOrbit(plan, physicsModules, utils) {
+  console.log('BUILDER_USED:', 'orbitBuilder');
+  const prompt = plan?.prompt || '';
   const palette = pickVariant(prompt, [
     { background: '#08111f', star: '#facc15' },
     { background: '#091425', star: '#f59e0b' },
     { background: '#071226', star: '#fde68a' }
   ]);
-  const startPositions = pickVariant(prompt, [
-    { x: 560, y: 225 },
-    { x: 510, y: 120 },
-    { x: 500, y: 320 }
+  const orbitLayouts = pickVariant(prompt, [
+    { radius: 154, startAngle: 8, period: 4.8 },
+    { radius: 134, startAngle: -72, period: 4.4 },
+    { radius: 172, startAngle: 118, period: 5.1 }
   ]);
+  const { circularOrbit } = physicsModules.OrbitalMechanics;
+  const { positionsToKeyframes } = physicsModules.MotionSolver;
   const planetFill = plan?.subject?.color || detectHexColor(prompt, '#60a5fa');
-  const starLabel = plan?.secondarySubjects?.[0]?.label || 'Star';
   const starFill = plan?.secondarySubjects?.[0]?.color || palette.star;
+  const orbitPositions = circularOrbit({
+    centerX: 400,
+    centerY: 225,
+    radius: orbitLayouts.radius,
+    startAngle: orbitLayouts.startAngle,
+    period: orbitLayouts.period,
+    duration: orbitLayouts.period,
+    sampleFPS: 30
+  });
+  const keyframes = positionsToKeyframes(orbitPositions);
+  const first = orbitPositions[0];
+  const last = orbitPositions[orbitPositions.length - 1];
 
   return createScene(
     palette.background,
     [
       {
-        id: 'star-core',
+        id: 'anchor-core',
         type: 'circle',
         x: 400,
         y: 225,
@@ -31,24 +51,24 @@ function buildOrbit(plan, prompt) {
         opacity: 1
       },
       {
-        id: 'planet-orbit',
+        id: 'moving-core',
         type: 'circle',
-        x: startPositions.x,
-        y: startPositions.y,
+        x: first.x,
+        y: first.y,
         radius: 20,
         fill: planetFill,
-        opacity: 1,
-        label: starLabel
+        opacity: 1
       }
     ],
     [
       {
-        id: 'planet-orbit-loop',
-        target: 'planet-orbit',
+        id: 'moving-path',
+        target: 'moving-core',
         type: 'move',
-        from: { x: startPositions.x, y: startPositions.y },
-        to: { x: startPositions.x, y: startPositions.y },
-        duration: 4.8,
+        from: { x: first.x, y: first.y },
+        to: { x: last.x, y: last.y },
+        keyframes,
+        duration: roundTo(orbitLayouts.period, 3),
         delay: 0,
         ease: 'none',
         repeat: -1,

@@ -43,12 +43,68 @@ const KEYWORD_MAP = [
   { intent: INTENT.DAMPED,     words: ['damp', 'decay', 'pluck', 'impact', 'rebound'] }
 ];
 
+const PROMPT_SUBJECT_GROUPS = [
+  /\b(circle|orb|sphere|dot|ball|bubble)\b/g,
+  /\b(square|box|cube|rectangle|rect)\b/g,
+  /\b(planet|moon|satellite|sun|star)\b/g,
+  /\b(text|title|headline|caption|word|label)\b/g,
+  /\b(city|skyline|building|buildings|urban|skyscraper|skyscrapers)\b/g,
+  /\b(particle|particles|dust|spark|sparks|confetti)\b/g,
+  /\b(chart|graph|candlestick|candle stick|candle bar|data)\b/g
+];
+
+const PROMPT_MOTION_PATTERNS = [
+  { type: 'orbit', pattern: /\b(orbit|orbiting|revolving|circling)\b/ },
+  { type: 'bounce', pattern: /\b(bounce|bouncing|jump|jumping|drop|dropping|fall|falling)\b/ },
+  { type: 'float', pattern: /\b(float|floating|drift|drifting|hover|hovering)\b/ },
+  { type: 'spin', pattern: /\b(spin|spinning|rotate|rotating)\b/ },
+  { type: 'flow', pattern: /\b(flow|flowing|stream|streaming|ripple|ribbons?)\b/ },
+  { type: 'reveal', pattern: /\b(reveal|revealing|show|showing|appear|appearing)\b/ }
+];
+
 function matchIntent(str) {
   const lower = str.toLowerCase();
   for (const { intent, words } of KEYWORD_MAP) {
     if (words.some(w => lower.includes(w))) return intent;
   }
   return null;
+}
+
+function summarizePromptComposition(prompt) {
+  const normalized = String(prompt || '').trim().replace(/\s+/g, ' ');
+  const lower = normalized.toLowerCase();
+  const matchedGroups = new Set();
+
+  PROMPT_SUBJECT_GROUPS.forEach(function (pattern, index) {
+    if (pattern.test(lower)) {
+      matchedGroups.add(index);
+    }
+    pattern.lastIndex = 0;
+  });
+
+  const quotedText = /["“][^"”]{1,60}["”]|'[^']{1,60}'/.test(normalized);
+  const conjunctions = (lower.match(/\b(with|and|plus)\b/g) || []).length;
+  const subjectCount = Math.max(
+    quotedText ? 1 : 0,
+    matchedGroups.size + (quotedText && matchedGroups.size > 0 ? 0 : quotedText ? 1 : 0)
+  );
+
+  const motion = PROMPT_MOTION_PATTERNS.find(function (entry) {
+    return entry.pattern.test(lower);
+  });
+
+  return {
+    subjectCount,
+    motionType: motion ? motion.type : 'float',
+    hasTextOverlay: quotedText || /\b(text|title|headline|caption|word|label)\b/.test(lower),
+    hasParticles: /\b(particle|particles|dust|spark|sparks|confetti|burst|explosion|explode)\b/.test(lower),
+    hasSkyline: /\b(city|skyline|building|buildings|urban|skyscraper|skyscrapers)\b/.test(lower),
+    hasCompositeLanguage: conjunctions > 0,
+    compositionHints: {
+      conjunctions,
+      quotedText
+    }
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,4 +157,4 @@ function analyzeScene(animationJSON) {
   return { elementIntents, animationIntents };
 }
 
-module.exports = { analyzeScene, INTENT };
+module.exports = { analyzeScene, summarizePromptComposition, INTENT };

@@ -33,6 +33,15 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function lerp(start, end, t) {
+  return start + (end - start) * t;
+}
+
+function getVariantFromPrompt(prompt) {
+  const hash = createPromptHash(prompt);
+  return hash % 3;
+}
+
 function createScene(background, elements, timeline) {
   return {
     version: '1.0',
@@ -50,6 +59,8 @@ module.exports = {
   clamp,
   createPromptHash,
   createScene,
+  getVariantFromPrompt,
+  lerp,
   pickVariant,
   slugify
 };

@@ -1,6 +1,6 @@
 'use strict';
 
-const { createScene, slugify } = require('../builderUtils');
+const { createScene, getVariantFromPrompt, slugify } = require('../builderUtils');
 
 function paletteForMood(mood) {
   const palettes = {
@@ -23,20 +23,23 @@ function inferSubjectRole(subject) {
   return 'shape';
 }
 
-function layoutForRole(role) {
+function layoutForRole(role, variant) {
+  const xOffset = [-24, 0, 28][variant];
+  const yOffset = [12, 0, -14][variant];
+
   if (role === 'text') {
-    return { x: 400, y: 145 };
+    return { x: 400 + xOffset, y: 145 + yOffset };
   }
 
   if (role === 'city') {
-    return { x: 400, y: 315 };
+    return { x: 400 + xOffset, y: 315 };
   }
 
   if (role === 'particles') {
-    return { x: 610, y: 250 };
+    return { x: 610 + xOffset, y: 250 + yOffset };
   }
 
-  return { x: 215, y: 245 };
+  return { x: 215 + xOffset, y: 245 + yOffset };
 }
 
 function buildTextElement(subject, position, index, palette) {
@@ -70,7 +73,7 @@ function buildParticleElements(subject, position, palette) {
 
   return dots.map(function (dot, index) {
     return {
-      id: index === 0 ? 'particles-cluster' : 'deco-dot-' + index,
+      id: index === 0 ? 'accent-cluster' : 'accent-dot-' + index,
       type: 'circle',
       x: position.x + dot.dx,
       y: position.y + dot.dy,
@@ -150,9 +153,9 @@ function buildShapeElement(subject, position, palette) {
   }];
 }
 
-function buildElementsForSubject(subject, index, palette) {
+function buildElementsForSubject(subject, index, palette, variant) {
   const role = inferSubjectRole(subject);
-  const position = layoutForRole(role);
+  const position = layoutForRole(role, variant);
 
   if (role === 'text') return buildTextElement(subject, position, index, palette);
   if (role === 'city') return buildCityElements(subject, position, palette);
@@ -242,7 +245,7 @@ function buildTimeline(elements, subjects, loop) {
       const role = inferSubjectRole(subject);
       if (role === 'text') return element.type === 'text' && element.content === subject.label;
       if (role === 'city') return element.id.startsWith('skyline-');
-      if (role === 'particles') return element.id === 'particles-cluster' || element.id.startsWith('deco-dot-');
+      if (role === 'particles') return element.id === 'accent-cluster' || element.id.startsWith('accent-dot-');
       return element.id.startsWith(slugify(subject.label, 'shape'));
     }) || subjects[0];
 
@@ -264,10 +267,12 @@ function prioritizeSubjects(subjects) {
 }
 
 function buildAbstractScene(plan) {
+  console.log('BUILDER_USED:', 'abstractSceneBuilder');
   const palette = paletteForMood(plan?.style?.mood);
+  const variant = getVariantFromPrompt(plan?.prompt || plan?.subject?.label || 'abstract');
   const subjects = prioritizeSubjects([plan.subject].concat(plan.secondarySubjects || []).slice(0, 3));
   const elements = subjects.flatMap(function (subject, index) {
-    return buildElementsForSubject(subject, index, palette);
+    return buildElementsForSubject(subject, index, palette, variant);
   });
   const loop = plan?.motion?.loop !== false;
   const timeline = buildTimeline(elements, subjects, loop);
